@@ -1,0 +1,6 @@
+# personal settings, written by Install.ps1
+config.json
+
+# runtime output
+brightness.log
+*.log
