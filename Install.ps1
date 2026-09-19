@@ -14,7 +14,7 @@ param(
     [double]$Latitude,
     [double]$Longitude,
     [int]   $DayBrightness   = 100,
-    [int]   $NightBrightness = 20,
+    [int]   $NightBrightness = 9,
     [double]$RampLowDeg      = -12.0,
     [double]$RampHighDeg     = 10.0,
     [int]   $GlideStepMs     = 25,

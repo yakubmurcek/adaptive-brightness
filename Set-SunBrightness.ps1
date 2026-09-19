@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Sets external monitor brightness (DDC/CI) from the sun's altitude.
-  Sun high -> DayBrightness (100). Sun below horizon -> NightBrightness (20).
+  Sun high -> DayBrightness (100). Sun below horizon -> NightBrightness (9).
   Smoothstep ramp across twilight so it never jumps.
 
   Latitude/Longitude come from config.json next to this script unless passed
@@ -12,7 +12,7 @@ param(
     [double]$Latitude,                    # decimal degrees, north positive
     [double]$Longitude,                   # decimal degrees, east positive
     [int]   $DayBrightness   = 100,
-    [int]   $NightBrightness = 20,
+    [int]   $NightBrightness = 9,
     [double]$RampLowDeg      = -12.0,      # sun altitude at which night level is reached
     [double]$RampHighDeg     = 10.0,       # sun altitude at which day level is reached
     [datetime]$TestTime,                  # preview another moment

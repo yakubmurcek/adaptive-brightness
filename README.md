@@ -7,10 +7,10 @@ No tray app, no service, no account. One PowerShell script and a scheduled task.
 
 ```
 18:00  ████████████████████ 100%
-19:00  █████████████░░░░░░░  67%
-19:30  ████████░░░░░░░░░░░░  42%
-20:00  ████░░░░░░░░░░░░░░░░  24%
-20:20  ███░░░░░░░░░░░░░░░░░  20%
+19:00  ████████████░░░░░░░░  63%
+19:30  ███████░░░░░░░░░░░░░  34%
+20:00  ███░░░░░░░░░░░░░░░░░  13%
+20:30  ██░░░░░░░░░░░░░░░░░░   9%
 ```
 
 ## How it works
@@ -53,7 +53,7 @@ Everything lives in `config.json`:
 |---|---|---|
 | `Latitude` / `Longitude` | *(from install)* | Decimal degrees. North and east positive. |
 | `DayBrightness` | `100` | Percent, when the sun is high. |
-| `NightBrightness` | `20` | Percent, after dark. |
+| `NightBrightness` | `9` | Percent, after dark. |
 | `RampLowDeg` | `-12.0` | Sun altitude (degrees) at which night level is reached. |
 | `RampHighDeg` | `10.0` | Sun altitude at which day level is reached. |
 | `GlideStepMs` | `25` | Milliseconds between 1-point fade steps. `0` = instant. |
