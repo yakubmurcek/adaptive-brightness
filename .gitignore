@@ -2,5 +2,8 @@
 config.json
 
 # runtime output
+state.json
 brightness.log
 *.log
+*.log.1
+*.utf16.old

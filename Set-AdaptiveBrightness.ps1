@@ -104,9 +104,26 @@ function Write-Log {
 function Save-Log {
     if ($script:LogLines.Count -eq 0) { return }
     try {
-        # keep the log from growing without bound
-        if ((Test-Path $LogPath) -and ((Get-Item $LogPath).Length -gt 1MB)) {
-            Move-Item $LogPath "$LogPath.1" -Force
+        if (Test-Path $LogPath) {
+            # A log written by the old script carries a UTF-16 BOM. Appending UTF-8 to it
+            # produces a file that is neither, and that no tool can read straight through,
+            # so retire it once and start clean rather than corrupting it further.
+            try {
+                $fs = [System.IO.File]::OpenRead($LogPath)
+                try {
+                    $bom = New-Object byte[] 2
+                    $read = $fs.Read($bom, 0, 2)
+                } finally { $fs.Dispose() }
+                if ($read -eq 2 -and (($bom[0] -eq 0xFF -and $bom[1] -eq 0xFE) -or
+                                      ($bom[0] -eq 0xFE -and $bom[1] -eq 0xFF))) {
+                    Move-Item $LogPath "$LogPath.utf16.old" -Force
+                }
+            } catch { }
+
+            # keep the log from growing without bound
+            if ((Test-Path $LogPath) -and ((Get-Item $LogPath).Length -gt 1MB)) {
+                Move-Item $LogPath "$LogPath.1" -Force
+            }
         }
         # UTF8 explicitly: PowerShell's ">>" redirection writes UTF-16, which made the
         # old log unreadable in anything but a Windows editor
