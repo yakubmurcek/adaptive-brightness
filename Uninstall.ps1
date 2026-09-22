@@ -19,6 +19,10 @@ param(
 $found = $false
 foreach ($name in $TaskName) {
     if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) {
+        # the task is now a resident daemon, so stop the running instance before removing
+        # the registration - unregistering alone can leave the process orphaned, still
+        # holding monitor handles and still quietly setting brightness
+        Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $name -Confirm:$false
         Write-Host "Removed scheduled task '$name'." -ForegroundColor Green
         $found = $true

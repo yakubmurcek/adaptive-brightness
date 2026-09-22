@@ -76,6 +76,39 @@ Measured over a simulated 8-hour broken-cloud day with ±0.3 Kt noise: **12 brig
 largest step 5.5 points, total excursion 12 points**. Over a full clear day, no step exceeds
 6 points.
 
+## Staying cheap
+
+It used to be a scheduled task firing every two minutes. That is a poor deal twice over: two
+minutes is slow enough to see the panel lag a cloud, and every one of those 720 daily runs paid
+about **1.2 s of CPU** to start PowerShell, parse the scripts and JIT-compile the DDC interop
+before doing a few milliseconds of actual work.
+
+So it is now one resident process that sleeps between ticks. A sleeping thread costs nothing
+measurable — 0.000 s of CPU over two idle minutes, measured — which means the tick can be much
+*faster* while the whole thing costs much less. Responsiveness and power usually trade against
+each other; here they did not.
+
+The pace follows the work rather than the clock:
+
+| Situation | Tick | Why |
+|---|---|---|
+| Mid-move, or target outside the deadband | **20 s** | You can see this happening; track it closely. |
+| Settled | doubles 20 → 40 → 80 s, capped at **180 s** | Nothing is happening. Back off, but stay quick to wake. |
+| Sun below `RampLowDeg` | **600 s** | Below the ramp the altitude term is pinned; only the calendar can change it. |
+| On battery | every interval × **3** | A laptop away from the wall would rather have slightly laggy brightness. |
+
+The network call is gated separately, at **once per 10 minutes**. Open-Meteo publishes on roughly
+a 15-minute cadence, so polling it every 20 seconds returns the same number dozens of times over.
+Nothing is lost by reusing it: only the *sky* term needs the network, and the *sun* term — which
+is what actually moves the panel minute to minute — is local geometry, recomputed every tick for
+free.
+
+Measured on this machine: **878 s of CPU per day before, ~206 s after** — about 4× cheaper, while
+reacting up to 6× faster when there is something to react to. Overnight it is cheaper still.
+
+An uneventful tick writes nothing to the log, so a 20-second tick does not turn into megabytes of
+`holding at 79%`; a heartbeat every 30 minutes still proves it is alive.
+
 ## When the data isn't there
 
 A brightness controller must never fail loudly, and must never pretend to know things.
@@ -119,8 +152,12 @@ cd sun-brightness
 .\Install.ps1
 ```
 
-`Install.ps1` finds your approximate location by IP, writes `config.json`, registers a task that
-runs every 2 minutes and at logon, and retires the older sun-only task if it is still present.
+`Install.ps1` finds your approximate location by IP, writes `config.json`, registers the task,
+starts it, and retires the older sun-only task if it is still present.
+
+The task starts one resident process at logon that then ticks on its own timer. A watchdog
+trigger re-checks every 15 minutes and restarts it if it ever died; while it is alive that check
+costs nothing, because the task is registered to ignore a second instance.
 
 Prefer not to be geolocated? Pass coordinates directly:
 
@@ -152,6 +189,12 @@ Everything lives in `config.json`. Changes take effect on the next tick — no r
 | `OverrideTolerancePct` | `6.0` | Gap from our commanded level that counts as you intervening. |
 | `OverrideMinutes` | `120` | How long to stand down after you intervene. |
 | `MaxCatchUpMinutes` | `10.0` | Caps the change budget after a long gap. |
+| `TickSeconds` | `20` | Gap between ticks while something is moving. |
+| `IdleTickSeconds` | `180` | Gap once the panel has settled. |
+| `NightTickSeconds` | `600` | Gap once the sun is below `RampLowDeg`. |
+| `WeatherIntervalMinutes` | `10.0` | How often the sky is re-measured over the network. |
+| `BatteryFactor` | `3.0` | Every gap is multiplied by this on battery. `1.0` disables it. |
+| `HeartbeatMinutes` | `30` | Log an uneventful tick at least this often. |
 | `TimeoutSec` | `10` | Weather request timeout. |
 
 ### Tuning it to your taste
