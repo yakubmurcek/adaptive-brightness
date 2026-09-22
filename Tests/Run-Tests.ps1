@@ -159,7 +159,7 @@ $overcast = Get-DayCeiling -Kt 0.10
 
 Assert-Near $clear    100 0.001 'clear sky -> full 100%'
 Assert-Near $overcast  55 0.001 'heavy overcast -> overcast level 55%'
-Assert-InRange $partly 70 85 'partly cloudy lands between the two'
+Assert-InRange $partly 60 80 'partly cloudy lands between the two'
 Assert-True ($clear -gt $partly -and $partly -gt $overcast) 'day ceiling is monotonic in Kt'
 
 # monotonic across the whole Kt domain

@@ -288,7 +288,7 @@ function Get-DayCeiling {
         [double]$DayBrightness      = 100.0,
         [double]$OvercastBrightness = 55.0,
         [double]$KtLow              = 0.25,
-        [double]$KtHigh             = 0.75
+        [double]$KtHigh             = 0.95
     )
     $g = Get-RampFactor -Value $Kt -Low $KtLow -High $KtHigh
     return $OvercastBrightness + ($DayBrightness - $OvercastBrightness) * $g
@@ -308,7 +308,7 @@ function Get-TargetBrightness {
         [double]$RampLowDeg         = -12.0,
         [double]$RampHighDeg        = 14.0,
         [double]$KtLow              = 0.25,
-        [double]$KtHigh             = 0.75,
+        [double]$KtHigh             = 0.95,
         [double]$MinBrightness      = 5.0,
         [double]$MaxBrightness      = 100.0
     )
