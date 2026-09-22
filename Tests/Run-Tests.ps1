@@ -47,9 +47,10 @@ function Assert-InRange { param([double]$Value, [double]$Min, [double]$Max, [str
     Assert-True (($Value -ge $Min) -and ($Value -le $Max)) $Name `
         ("expected {0}..{1}, got {2}" -f $Min, $Max, $Value) }
 
-# location used throughout (Prague, matches the shipped config)
-$LAT = 50.0471
-$LON = 14.4523
+# location used throughout (Ostrava-Pustkovec). Only the latitude really matters here:
+# it sets the solar geometry the altitude assertions below are calibrated against.
+$LAT = 49.8419
+$LON = 18.1616
 
 # ===========================================================================
 Section 'math helpers'
