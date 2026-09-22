@@ -1,18 +1,67 @@
-# Adaptive Brightness
+<h1 align="center">Adaptive Brightness</h1>
 
-Sets your **external monitor's** brightness from the sun's position *and how bright the sky
-actually is* — full brightness in direct sun, noticeably lower under thick cloud, dim at night,
-with a long smooth fade through twilight.
+<p align="center">
+  <em>Your monitor should be as bright as the day actually is — not as bright as the calendar says.</em>
+</p>
 
-No tray app, no service, no account, no API key. Two PowerShell scripts and a scheduled task.
+<p align="center">
+  <a href="https://github.com/yakubmurcek/sun-brightness/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/yakubmurcek/sun-brightness/actions/workflows/tests.yml/badge.svg"></a>
+  <img alt="platform" src="https://img.shields.io/badge/platform-Windows-0078D4">
+  <img alt="powershell" src="https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-5391FE">
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <img alt="dependencies" src="https://img.shields.io/badge/dependencies-none-brightgreen">
+</p>
 
+Sets your **external monitor's** brightness over DDC/CI from the sun's position *and how bright
+the sky actually is* — full brightness in direct sun, noticeably lower under thick cloud, dim at
+night, with a long smooth fade through twilight.
+
+No tray app, no service, no account, no API key, no driver. Two PowerShell scripts and a
+scheduled task.
+
+![Brightness across one day, by sky condition](docs/response-curve.svg)
+
+<p align="center">
+  <sub>Not a mockup — <a href="Tools/New-CurveChart.ps1"><code>Tools/New-CurveChart.ps1</code></a>
+  generates this by calling the real model, so the picture cannot drift from the behaviour.</sub>
+</p>
+
+Same day, same latitude, same sun. The only thing that changed is the sky — and that is the whole
+point: **sun position alone cannot tell a dazzling noon from a dark grey one.**
+
+## Quick start
+
+```powershell
+git clone https://github.com/yakubmurcek/sun-brightness.git
+cd sun-brightness
+.\Install.ps1
 ```
-clear noon      ████████████████████ 100%
-broken cloud    ███████████████░░░░░  77%
-heavy overcast  ███████████░░░░░░░░░  55%
-dusk            ████░░░░░░░░░░░░░░░░  22%
-night           ██░░░░░░░░░░░░░░░░░░   9%
-```
+
+That is the whole install. It finds your approximate location by IP, writes `config.json`,
+registers the task and starts it. Prefer not to be geolocated? `.\Install.ps1 -Latitude 40.7128
+-Longitude -74.0060`.
+
+## Design notes
+
+The parts worth a look if you are reading this as code rather than as a utility:
+
+- **The decision logic is pure.** [`BrightnessCore.ps1`](BrightnessCore.ps1) does no I/O — no
+  network, no DDC, no clock reads — so a simulated eight-hour broken-cloud day, a twenty-hour
+  network outage and a full year of sunrises all run in milliseconds. **154 tests**, none of which
+  need a monitor.
+- **Clouds are measured, not inferred.** The clearness index `Kt` is a *ratio*, so it means the
+  same thing in January as in July, in Oslo as in Nairobi. [Why that matters ↓](#how-it-works)
+- **Time constants, not fixed weights.** The smoothing uses `α = 1 − e^(−Δt/τ)`, so a late tick, a
+  rapid burst and a six-hour hibernation are all weighted correctly instead of the EMA quietly
+  lying about how much it knows. [↓](#staying-smooth)
+- **"No reading because it's dark" ≠ "no reading because the network died."** Kt is *undefined* at
+  night, not missing, so the staleness clock stops at sunset. Letting it run was a real bug: an
+  overcast evening decayed to neutral overnight and the panel came up near-full on a grey morning.
+  [↓](#when-the-data-isnt-there)
+- **It never fights you.** Touch the monitor's own buttons and it notices the gap, stands down for
+  two hours, and eases back on from where *you* left it. [↓](#manual-control)
+- **It ticks 6× faster than it used to and costs 4× less CPU.** One resident process that sleeps,
+  paced by the work rather than the clock. [↓](#staying-cheap)
 
 ## Why not just use the sun's position?
 
@@ -146,24 +195,23 @@ fighting you every two minutes. It then eases on from where you left it.
 
 ## Install
 
-```powershell
-git clone https://github.com/yakubmurcek/sun-brightness.git
-cd sun-brightness
-.\Install.ps1
-```
+The commands are in [Quick start](#quick-start); this is what they actually do.
 
-`Install.ps1` finds your approximate location by IP, writes `config.json`, registers the task,
-starts it, and retires the older sun-only task if it is still present.
+`Install.ps1` finds your approximate location by IP, writes `config.json`, registers the scheduled
+task, starts it, and retires the older sun-only task if it is still present.
 
 The task starts one resident process at logon that then ticks on its own timer. A watchdog
 trigger re-checks every 15 minutes and restarts it if it ever died; while it is alive that check
 costs nothing, because the task is registered to ignore a second instance.
 
-Prefer not to be geolocated? Pass coordinates directly:
+To remove it again:
 
 ```powershell
-.\Install.ps1 -Latitude 40.7128 -Longitude -74.0060
+.\Uninstall.ps1                 # removes the task, keeps your config
+.\Uninstall.ps1 -RemoveConfig   # removes everything it ever wrote
 ```
+
+Your monitor is left at whatever brightness it currently has.
 
 ## Configuration
 
@@ -217,14 +265,18 @@ Want it to react faster to clouds, at the cost of more movement? Lower `KtTauMin
 ## Tests
 
 ```powershell
-pwsh -File .\Tests\Run-Tests.ps1              # 102 tests, no monitor or network needed
+pwsh -File .\Tests\Run-Tests.ps1              # 123 tests, no monitor or network needed
 pwsh -File .\Tests\Run-IntegrationTests.ps1   # 31 tests against the real monitor
 ```
 
 All decision logic is in `BrightnessCore.ps1` as pure functions, so a whole simulated day, a
 three-hour outage, or a cloud bank arriving at noon all run in milliseconds. The suite covers
 sunrise-to-midnight sweeps, clear versus overcast days, noisy broken cloud (asserting bounded
-oscillation), network loss and recovery, the overnight hold, and manual override.
+oscillation), network loss and recovery, the overnight hold, tick pacing, network-call gating,
+and manual override.
+
+The unit suite needs no hardware, which is exactly why it runs in CI on every push — a brightness
+algorithm you cannot test without waiting for sunset is one you cannot safely change.
 
 The integration suite drives the real DDC/CI path — override detection, pause/resume, corrupt
 state, offline operation. **It moves your monitor brightness while it runs** and restores the
@@ -268,6 +320,24 @@ cloudy can still read bright (broken cloud with the sun visible).
 - **DDC/CI is slow and not always reliable.** Some monitors ignore rapid writes or drop them under
   load; raise `GlideStepMs` if a fade looks choppy.
 
+## Project layout
+
+| File | What it is |
+|---|---|
+| [`BrightnessCore.ps1`](BrightnessCore.ps1) | The model. Pure functions, no I/O — this is the interesting half. |
+| [`Set-AdaptiveBrightness.ps1`](Set-AdaptiveBrightness.ps1) | Plumbing: config, state, HTTP, DDC/CI, logging, the daemon loop. |
+| [`Install.ps1`](Install.ps1) / [`Uninstall.ps1`](Uninstall.ps1) | Scheduled-task setup and removal. |
+| [`Tests/`](Tests) | 123 unit tests (no hardware) and 31 integration tests (real monitor). |
+| [`Tools/New-CurveChart.ps1`](Tools/New-CurveChart.ps1) | Regenerates the chart above from the model. |
+| [`Set-SunBrightness.ps1`](Set-SunBrightness.ps1) | The original sun-only version, kept for reference. |
+
+## Contributing
+
+Bug reports and pull requests welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The one rule that
+matters: decision logic goes in `BrightnessCore.ps1` and stays pure.
+
+Version history is in [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
-MIT
+MIT © [Yakub Murcek](https://github.com/yakubmurcek)
