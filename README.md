@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yakubmurcek/sun-brightness/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/yakubmurcek/sun-brightness/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="https://github.com/yakubmurcek/adaptive-brightness/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/yakubmurcek/adaptive-brightness/actions/workflows/tests.yml/badge.svg"></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows-0078D4">
   <img alt="powershell" src="https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-5391FE">
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
@@ -32,8 +32,8 @@ point: **sun position alone cannot tell a dazzling noon from a dark grey one.**
 ## Quick start
 
 ```powershell
-git clone https://github.com/yakubmurcek/sun-brightness.git
-cd sun-brightness
+git clone https://github.com/yakubmurcek/adaptive-brightness.git
+cd adaptive-brightness
 .\Install.ps1
 ```
 
