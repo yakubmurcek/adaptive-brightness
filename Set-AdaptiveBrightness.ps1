@@ -584,7 +584,7 @@ function Invoke-BrightnessTick {
     $readings = @()
     $observedPct = $null
     if (-not $WhatIfOnly -or $Status) {
-        $readings = Get-MonitorReadings
+        $readings = @(Get-MonitorReadings)
         if ($readings.Count -gt 0) { $observedPct = $readings[0].Percent }
     }
 
