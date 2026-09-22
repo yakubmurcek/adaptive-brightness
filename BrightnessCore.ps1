@@ -435,3 +435,100 @@ function Test-ManualOverride {
     }
     return @{ IsOverridden = $false; Reason = ('panel matches commanded level (gap {0:N0})' -f $gap) }
 }
+
+# ---------------------------------------------------------------------------
+# pacing
+# ---------------------------------------------------------------------------
+
+function Get-NextTickSeconds {
+    <#
+      How long the daemon should sleep before looking again.
+
+      The goal is "as responsive as it needs to be, and no busier than that". Ticking is
+      not free - each one reads DDC over I2C, touches state.json, and wakes a core - so a
+      fixed fast interval burns power all night to re-confirm a number that cannot move.
+
+      The pace therefore follows the work, not the clock:
+
+        moving            -> Fast. We are mid-glide; the user can see this.
+        approaching       -> Fast. The target is outside the deadband, so a move is due.
+        holding, settled  -> back off geometrically toward Idle, because nothing is
+                             happening and the sun's own rate of change is the only thing
+                             that can end that.
+        sun below horizon -> Night, which is the slowest of all: below the ramp there is
+                             no altitude term left to track.
+
+      Backing off *geometrically* rather than jumping straight to Idle matters: a sky that
+      has just cleared should be picked up within a tick or two of settling, not after a
+      five-minute nap. Doubling gets us to cheap quickly while keeping the first few
+      post-move ticks attentive.
+
+      On battery every result is stretched by BatteryFactor. A laptop on a train is the
+      one case where the user would rather have slightly laggy brightness than a flat
+      battery, and it is also the case where the screen is usually the smaller drain.
+
+      Pure: the caller supplies the situation, this decides the number.
+    #>
+    param(
+        [Parameter(Mandatory)][bool]$Changed,          # did this tick move the panel
+        [Parameter(Mandatory)][bool]$WithinDeadband,   # is the target close enough to hold
+        [Parameter(Mandatory)][double]$SunAltitudeDeg,
+        [Parameter(Mandatory)][double]$PreviousSeconds,
+        [double]$FastSeconds    = 20.0,
+        [double]$IdleSeconds    = 180.0,
+        [double]$NightSeconds   = 600.0,
+        [double]$RampLowDeg     = -12.0,
+        [double]$BatteryFactor  = 1.0,
+        [bool]  $OnBattery      = $false
+    )
+
+    # guard a config that would invert the ladder
+    if ($IdleSeconds -lt $FastSeconds)  { $IdleSeconds  = $FastSeconds }
+    if ($NightSeconds -lt $IdleSeconds) { $NightSeconds = $IdleSeconds }
+
+    if ($SunAltitudeDeg -lt $RampLowDeg -and -not $Changed) {
+        # fully below the ramp: the altitude term is pinned at night level and only the
+        # calendar can change that, so there is nothing to be gained by looking often
+        $next = $NightSeconds
+    } elseif ($Changed -or -not $WithinDeadband) {
+        $next = $FastSeconds
+    } else {
+        $prev = [Math]::Max($PreviousSeconds, $FastSeconds)
+        $next = [Math]::Min($prev * 2.0, $IdleSeconds)
+    }
+
+    if ($OnBattery) {
+        $factor = [Math]::Max(1.0, $BatteryFactor)
+        $next = $next * $factor
+    }
+    return [double]$next
+}
+
+function Test-ShouldFetchWeather {
+    <#
+      Is the network call worth making this tick?
+
+      Open-Meteo publishes current conditions on a ~15-minute cadence, so polling it every
+      20 seconds returns the identical number dozens of times over: pure cost, no
+      information. Worse, it is a free unauthenticated service, and hammering it is how
+      that stops being true for everybody.
+
+      The cached Kt is not a degraded substitute in between. Get-EffectiveClearness holds a
+      cached value as-is until KtMaxAgeMinutes, and the sun's altitude - which is what
+      actually moves brightness minute to minute - is recomputed locally every tick for
+      free. So the fast ticks stay fully accurate; only the sky term is refreshed lazily.
+
+      Returns $true when we have no usable estimate at all (get one now, whatever the
+      clock says) or when the last fetch is older than the interval.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowNull()][System.Nullable[double]]$LastFetchAgeSeconds,
+        [Parameter(Mandatory)][bool]$HaveUsableKt,
+        [double]$IntervalSeconds = 600.0
+    )
+
+    if (-not $HaveUsableKt)               { return $true }
+    if ($null -eq $LastFetchAgeSeconds)   { return $true }
+    if ($LastFetchAgeSeconds -lt 0)       { return $true }   # clock moved backwards
+    return ([double]$LastFetchAgeSeconds -ge $IntervalSeconds)
+}

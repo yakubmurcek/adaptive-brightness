@@ -498,6 +498,119 @@ foreach ($i in 1..60) {
 Assert-True ($falsePositives -eq 0) 'our own adjustments never self-trigger override detection' `
     ("$falsePositives false positives")
 
+
+# ===========================================================================
+Section 'tick pacing backs off when there is nothing to do'
+# ===========================================================================
+
+$fast = 20.0; $idle = 180.0; $night = 600.0
+
+# a tick that moved the panel, or one that wants to, stays attentive
+Assert-Near (Get-NextTickSeconds -Changed $true -WithinDeadband $false -SunAltitudeDeg 30 `
+                -PreviousSeconds 180 -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night) `
+            $fast 1e-9 'a tick that moved the panel returns to the fast pace'
+
+Assert-Near (Get-NextTickSeconds -Changed $false -WithinDeadband $false -SunAltitudeDeg 30 `
+                -PreviousSeconds 180 -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night) `
+            $fast 1e-9 'a target outside the deadband keeps the fast pace even if we did not move'
+
+# settled: back off, but geometrically rather than all at once
+$s1 = Get-NextTickSeconds -Changed $false -WithinDeadband $true -SunAltitudeDeg 30 `
+          -PreviousSeconds $fast -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night
+Assert-Near $s1 40.0 1e-9 'the first settled tick doubles the interval'
+
+$s2 = Get-NextTickSeconds -Changed $false -WithinDeadband $true -SunAltitudeDeg 30 `
+          -PreviousSeconds $s1 -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night
+Assert-Near $s2 80.0 1e-9 'and keeps doubling while nothing happens'
+
+# ...and never past the idle ceiling
+$s = $fast
+foreach ($i in 1..20) {
+    $s = Get-NextTickSeconds -Changed $false -WithinDeadband $true -SunAltitudeDeg 30 `
+             -PreviousSeconds $s -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night
+}
+Assert-Near $s $idle 1e-9 'the back-off saturates at the idle interval, it does not run away'
+
+# a settled backed-off daemon must still snap back the moment work appears
+$back = Get-NextTickSeconds -Changed $false -WithinDeadband $false -SunAltitudeDeg 30 `
+            -PreviousSeconds $s -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night
+Assert-Near $back $fast 1e-9 'work appearing after a long idle snaps straight back to fast'
+
+# deep night: below the ramp the altitude term cannot move, so neither should we
+Assert-Near (Get-NextTickSeconds -Changed $false -WithinDeadband $true -SunAltitudeDeg -30 `
+                -PreviousSeconds $fast -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night `
+                -RampLowDeg -12.0) `
+            $night 1e-9 'below the ramp the daemon drops to the night interval'
+
+Assert-Near (Get-NextTickSeconds -Changed $true -WithinDeadband $false -SunAltitudeDeg -30 `
+                -PreviousSeconds $night -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night `
+                -RampLowDeg -12.0) `
+            $fast 1e-9 'but a move at night is still followed closely (e.g. easing off an override)'
+
+# battery stretches everything
+Assert-Near (Get-NextTickSeconds -Changed $true -WithinDeadband $false -SunAltitudeDeg 30 `
+                -PreviousSeconds 20 -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night `
+                -OnBattery $true -BatteryFactor 3.0) `
+            60.0 1e-9 'on battery every interval is stretched by the battery factor'
+
+Assert-Near (Get-NextTickSeconds -Changed $true -WithinDeadband $false -SunAltitudeDeg 30 `
+                -PreviousSeconds 20 -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night `
+                -OnBattery $false -BatteryFactor 3.0) `
+            $fast 1e-9 'and on mains it is not'
+
+# a factor below 1 would speed the machine up on battery, which is backwards
+Assert-Near (Get-NextTickSeconds -Changed $true -WithinDeadband $false -SunAltitudeDeg 30 `
+                -PreviousSeconds 20 -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night `
+                -OnBattery $true -BatteryFactor 0.2) `
+            $fast 1e-9 'a battery factor below 1 is ignored rather than making it busier'
+
+# an inverted config must not produce a ladder that goes the wrong way
+$bad = Get-NextTickSeconds -Changed $false -WithinDeadband $true -SunAltitudeDeg 30 `
+           -PreviousSeconds 60 -FastSeconds 120 -IdleSeconds 30 -NightSeconds 10
+Assert-True ($bad -ge 120) 'an idle interval shorter than the fast one is corrected, not obeyed' `
+    "got $bad"
+
+# the pace never drops below the fast interval, whatever it is handed
+$floor = Get-NextTickSeconds -Changed $false -WithinDeadband $true -SunAltitudeDeg 30 `
+             -PreviousSeconds 1 -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night
+Assert-True ($floor -ge $fast) 'a nonsensically small previous interval cannot undercut the fast pace' `
+    "got $floor"
+
+# ===========================================================================
+Section 'the network call is made only when it can tell us something new'
+# ===========================================================================
+
+Assert-True (Test-ShouldFetchWeather -LastFetchAgeSeconds 30 -HaveUsableKt $false -IntervalSeconds 600) `
+    'with no usable Kt we fetch immediately, whatever the clock says'
+
+Assert-True (Test-ShouldFetchWeather -LastFetchAgeSeconds $null -HaveUsableKt $true -IntervalSeconds 600) `
+    'a first run with no recorded fetch fetches'
+
+Assert-True (-not (Test-ShouldFetchWeather -LastFetchAgeSeconds 30 -HaveUsableKt $true -IntervalSeconds 600)) `
+    'a fresh sample is reused rather than re-fetched'
+
+Assert-True (-not (Test-ShouldFetchWeather -LastFetchAgeSeconds 599 -HaveUsableKt $true -IntervalSeconds 600)) `
+    'and is still reused right up to the interval'
+
+Assert-True (Test-ShouldFetchWeather -LastFetchAgeSeconds 600 -HaveUsableKt $true -IntervalSeconds 600) `
+    'once the interval is up we fetch again'
+
+Assert-True (Test-ShouldFetchWeather -LastFetchAgeSeconds -5000 -HaveUsableKt $true -IntervalSeconds 600) `
+    'a clock that moved backwards fetches rather than waiting out a negative age'
+
+# the whole point: a fast tick must not mean a fast poll
+$fetches = 0
+$age = 0.0
+$tickSeconds = 20.0
+foreach ($i in 1..180) {                       # one hour of 20-second ticks
+    if (Test-ShouldFetchWeather -LastFetchAgeSeconds $age -HaveUsableKt $true -IntervalSeconds 600) {
+        $fetches++; $age = 0.0
+    }
+    $age += $tickSeconds
+}
+Assert-True ($fetches -le 7) 'an hour of 20-second ticks makes at most a handful of network calls' `
+    "$fetches calls in 180 ticks"
+Assert-True ($fetches -ge 5) 'but it does keep the sky estimate current' "$fetches calls"
 # ===========================================================================
 Write-Host ''
 Write-Host ('=' * 60)
