@@ -577,6 +577,45 @@ Assert-True ($floor -ge $fast) 'a nonsensically small previous interval cannot u
     "got $floor"
 
 # ===========================================================================
+Section 'a correction pending at night glides, it does not wait for the night pace'
+# ===========================================================================
+# 2026-09-22 22:48: panel at 63%, target 9%, sun far below the ramp. The deadband used to
+# gate the rate-limited *step*, which on a 20 s tick is only 1 point, so the tick "held",
+# reported itself settled, and the pacer slept the 10-minute night interval - the panel
+# then lurched 30 points at a time.
+
+$r = Resolve-AppliedBrightness -LastApplied 58 -Target 9 -DeltaSeconds 20 -MaxRatePerMinute 3
+Assert-True $r.Changed 'a fast tick far from target takes its small step instead of holding'
+Assert-Near $r.Applied 57 1e-9 'and the step is exactly the rate budget for 20 s'
+Assert-True (-not $r.Settled) 'a chase in progress is not settled'
+
+$r = Resolve-AppliedBrightness -LastApplied 60 -Target 62 -DeltaSeconds 20
+Assert-True $r.Settled 'jitter inside the deadband is settled'
+
+Assert-Near (Get-NextTickSeconds -Changed $false -WithinDeadband $false -SunAltitudeDeg -35 `
+                -PreviousSeconds $fast -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night `
+                -RampLowDeg -12.0) `
+            $fast 1e-9 'below the ramp, an unsettled target still gets the fast pace'
+
+# drive the real pacer and the real decision together, second by simulated second
+$applied = 63.0; $elapsed = 0.0; $sleep = $fast; $maxStep = 0.0
+while ($elapsed -lt 3600) {
+    $r = Resolve-AppliedBrightness -LastApplied $applied -Target 9 -DeltaSeconds $sleep `
+            -MaxRatePerMinute 3 -DeadbandPct 4 -MinBrightness 5
+    $step = [Math]::Abs($r.Applied - $applied)
+    if ($step -gt $maxStep) { $maxStep = $step }
+    $applied = $r.Applied
+    if ($r.Settled -and -not $r.Changed) { break }
+    $sleep = Get-NextTickSeconds -Changed $r.Changed -WithinDeadband $r.Settled -SunAltitudeDeg -35 `
+                -PreviousSeconds $sleep -FastSeconds $fast -IdleSeconds $idle -NightSeconds $night `
+                -RampLowDeg -12.0
+    $elapsed += $sleep
+}
+Assert-InRange $applied 9 13 'the night chase reaches the target band'
+Assert-True ($elapsed -le 20 * 60) 'at the configured 3 pts/min, in about 18 minutes' "took $elapsed s"
+Assert-True ($maxStep -le 1.0 + 1e-9) 'in 1-point steps, not 30-point lurches' "max step $maxStep"
+
+# ===========================================================================
 Section 'the network call is made only when it can tell us something new'
 # ===========================================================================
 

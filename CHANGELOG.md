@@ -2,6 +2,18 @@
 
 Notable changes, newest first. Dates are the day the work landed on `main`.
 
+## 2026-09-22 — corrections glide instead of lurching
+
+- **Fixed:** a tick where no monitor answered DDC/CI crashed (`property 'Count' cannot be found`)
+  instead of skipping, so brightness stopped tracking for hours.
+- **Fixed:** the deadband gated the rate-limited *step*, not the distance to target. On a 20 s tick
+  the step is 1 point, so a real correction "held" and looked settled. The daemon only moved
+  because backing off saved up budget, and at night it dropped to the 600 s pace and jumped ~30
+  points at a time. Now a correction walks in 1-point steps at the fast pace until it is within
+  the deadband, day or night.
+- **Changed:** touching the monitor again during a manual override restarts the override from that
+  touch, and the level it later eases on from is the one you actually left.
+
 ## 2026-09-22 — the resident daemon
 
 **Ticks up to 6× faster while using about 4× less CPU.**

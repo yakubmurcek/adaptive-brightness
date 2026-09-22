@@ -342,16 +342,21 @@ function Resolve-AppliedBrightness {
            change in the data (a cloud bank arriving) becomes a ramp over minutes rather
            than a jolt. This is what keeps the display calm when the *input* is not.
 
-        2. Deadband - ignore moves smaller than DeadbandPct. Weather data jitters by a
+        2. Deadband - ignore targets closer than DeadbandPct. Weather data jitters by a
            few percent tick to tick; without a deadband the panel would tick 61-62-61-62
-           forever. The deadband is checked against the rate-limited move, and the last
-           *commanded* level is the reference, so small errors cannot accumulate.
+           forever. The deadband is checked against the distance to the target, not the
+           rate-limited step: on a fast tick the step is always small, so gating the step
+           would stall every real correction unless the caller slowed down to save up
+           budget. The last *commanded* level is the reference, so small errors cannot
+           accumulate.
 
-           Exception: if the move would land on a hard limit, or we have never commanded
-           anything, apply it regardless - being stuck 3 points off the floor at night is
-           worse than one extra write.
+           Exception: if the target is a hard limit, or we have never commanded anything,
+           apply it regardless - being stuck 3 points off the floor at night is worse than
+           one extra write.
 
-      Returns a hashtable: Applied, Changed, Reason, RateLimited.
+      Returns a hashtable: Applied, Changed, Reason, RateLimited, Settled. Settled means
+      the panel is now within the deadband of the target, so the pacer may slow down. A
+      rate-limited chase is not settled, even on a tick that had no budget to move.
     #>
     param(
         [Parameter(Mandatory)][AllowNull()][System.Nullable[double]]$LastApplied,
@@ -367,7 +372,7 @@ function Resolve-AppliedBrightness {
 
     if ($null -eq $LastApplied) {
         return @{ Applied = $target; Changed = $true
-                  Reason = 'first run, adopting target'; RateLimited = $false }
+                  Reason = 'first run, adopting target'; RateLimited = $false; Settled = $true }
     }
 
     $last  = Get-Clamped -Value ([double]$LastApplied) -Min $MinBrightness -Max $MaxBrightness
@@ -386,23 +391,29 @@ function Resolve-AppliedBrightness {
 
     $candidate = Get-Clamped -Value ($last + $delta) -Min $MinBrightness -Max $MaxBrightness
     $move      = [Math]::Abs($candidate - $last)
+    $distance  = [Math]::Abs($target - $last)
 
     # ---- deadband ----
-    $atLimit = ($candidate -le $MinBrightness) -or ($candidate -ge $MaxBrightness)
-    if ($move -lt $DeadbandPct -and -not $atLimit) {
+    $targetAtLimit = ($target -le $MinBrightness) -or ($target -ge $MaxBrightness)
+    if ($distance -lt $DeadbandPct -and -not $targetAtLimit) {
         return @{ Applied = $last; Changed = $false
-                  Reason = ('within deadband ({0:N1} < {1:N1})' -f $move, $DeadbandPct)
-                  RateLimited = $rateLimited }
+                  Reason = ('within deadband ({0:N1} < {1:N1})' -f $distance, $DeadbandPct)
+                  RateLimited = $false; Settled = $true }
     }
     if ($move -eq 0) {
-        return @{ Applied = $last; Changed = $false
-                  Reason = 'already at target'; RateLimited = $rateLimited }
+        # either already there, or no time has elapsed to spend on the move
+        $reason = 'no rate budget yet'
+        if ($distance -eq 0) { $reason = 'already at target' }
+        return @{ Applied = $last; Changed = $false; Reason = $reason
+                  RateLimited = $rateLimited; Settled = ($distance -eq 0) }
     }
 
     $reason = 'stepping toward target'
     if ($rateLimited) { $reason = ('rate limited to {0:N1} pts' -f $move) }
 
-    return @{ Applied = $candidate; Changed = $true; Reason = $reason; RateLimited = $rateLimited }
+    $remaining = [Math]::Abs($target - $candidate)
+    return @{ Applied = $candidate; Changed = $true; Reason = $reason; RateLimited = $rateLimited
+              Settled = ($remaining -lt $DeadbandPct -or $remaining -eq 0) }
 }
 
 function Test-ManualOverride {
@@ -486,7 +497,7 @@ function Get-NextTickSeconds {
     if ($IdleSeconds -lt $FastSeconds)  { $IdleSeconds  = $FastSeconds }
     if ($NightSeconds -lt $IdleSeconds) { $NightSeconds = $IdleSeconds }
 
-    if ($SunAltitudeDeg -lt $RampLowDeg -and -not $Changed) {
+    if ($SunAltitudeDeg -lt $RampLowDeg -and -not $Changed -and $WithinDeadband) {
         # fully below the ramp: the altitude term is pinned at night level and only the
         # calendar can change that, so there is nothing to be gained by looking often
         $next = $NightSeconds

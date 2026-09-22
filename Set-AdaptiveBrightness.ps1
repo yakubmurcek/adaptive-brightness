@@ -627,6 +627,17 @@ function Invoke-BrightnessTick {
         # ---- an override already in force ----
         $overrideUntil = ConvertTo-DateTimeOrNull $State.OverrideUntil
         if ($null -ne $overrideUntil -and $now -lt $overrideUntil) {
+            # keep watching the panel while standing down: a second touch restarts the clock
+            # from *that* touch, and the level we ease on from later is the one the user
+            # actually left, not the one they started from
+            $again = Test-ManualOverride -LastApplied $lastApplied -ObservedBrightness $observedPct `
+                                         -TolerancePct $Cfg.OverrideTolerancePct
+            if ($again.IsOverridden) {
+                $overrideUntil = $now.AddMinutes($Cfg.OverrideMinutes)
+                $State.OverrideUntil = $overrideUntil.ToString('o')
+                $State.LastApplied = $observedPct
+                Write-Log ("manual change again ({0}); override restarted" -f $again.Reason) 'warn'
+            }
             $mins = [int]([Math]::Ceiling(($overrideUntil - $now).TotalMinutes))
             Write-Log "manual override active for another $mins min; not adjusting" 'warn'
             Save-StandDown
@@ -671,7 +682,7 @@ function Invoke-BrightnessTick {
 
         if ($WhatIfOnly) {
             Write-Log "-WhatIfOnly: monitor not touched"
-            return @{ Changed = $false; WithinDeadband = (-not $decision.Changed)
+            return @{ Changed = $false; WithinDeadband = [bool]$decision.Settled
                       SunAltitude = $alt; Stop = $true }
         }
 
@@ -705,7 +716,7 @@ function Invoke-BrightnessTick {
         }
         Save-State $State
 
-        return @{ Changed = [bool]$decision.Changed; WithinDeadband = (-not $decision.Changed)
+        return @{ Changed = [bool]$decision.Changed; WithinDeadband = [bool]$decision.Settled
                   SunAltitude = $alt; Stop = $false }
 
     } finally {
