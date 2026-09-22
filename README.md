@@ -143,7 +143,7 @@ The pace follows the work rather than the clock:
 |---|---|---|
 | Mid-move, or target outside the deadband | **20 s** | You can see this happening; track it closely. |
 | Settled | doubles 20 → 40 → 80 s, capped at **180 s** | Nothing is happening. Back off, but stay quick to wake. |
-| Sun below `RampLowDeg` | **600 s** | Below the ramp the altitude term is pinned; only the calendar can change it. |
+| Sun below `RampLowDeg`, settled | **600 s** | Below the ramp the altitude term is pinned; only the calendar can change it. A correction still in progress keeps the 20 s pace. |
 | On battery | every interval × **3** | A laptop away from the wall would rather have slightly laggy brightness. |
 
 The network call is gated separately, at **once per 10 minutes**. Open-Meteo publishes on roughly
@@ -178,7 +178,13 @@ A brightness controller must never fail loudly, and must never pretend to know t
 
 The panel is read before it is written. A level we did not command means you reached for the
 monitor's own buttons, so the script stands down for `OverrideMinutes` (default 2 h) instead of
-fighting you every two minutes. It then eases on from where you left it.
+fighting you every two minutes. It then eases on from where you left it. Touch it again while it
+is standing down and the clock restarts from that touch.
+
+A gap only counts as you if the script was watching. Many monitors come back from sleep or a
+power cycle at their own default level, so after `ResyncAfterMinutes` (default 45) with no look at
+the panel — the PC slept, the monitor was off — a changed level is taken as the new starting point
+and faded from, not treated as a two-hour "hands off".
 
 ```powershell
 .\Set-AdaptiveBrightness.ps1 -Pause           # stop adjusting; survives reboots
@@ -232,11 +238,12 @@ Everything lives in `config.json`. Changes take effect on the next tick — no r
 | `KtTauMinutes` | `30.0` | Sky smoothing time constant. Raise to react more slowly. |
 | `KtMaxAgeMinutes` | `180.0` | How long a cached reading is trusted before it decays. |
 | `MaxRatePerMinute` | `3.0` | Maximum percentage points of change per minute. |
-| `DeadbandPct` | `4.0` | Moves smaller than this are skipped. |
+| `DeadbandPct` | `4.0` | Targets closer than this are ignored; farther ones are faded to. |
 | `GlideStepMs` | `25` | Milliseconds between 1-point fade steps. `0` = instant. |
 | `OverrideTolerancePct` | `6.0` | Gap from our commanded level that counts as you intervening. |
 | `OverrideMinutes` | `120` | How long to stand down after you intervene. |
 | `MaxCatchUpMinutes` | `10.0` | Caps the change budget after a long gap. |
+| `ResyncAfterMinutes` | `45.0` | Unwatched this long, a changed panel is a wake-up, not you. |
 | `TickSeconds` | `20` | Gap between ticks while something is moving. |
 | `IdleTickSeconds` | `180` | Gap once the panel has settled. |
 | `NightTickSeconds` | `600` | Gap once the sun is below `RampLowDeg`. |

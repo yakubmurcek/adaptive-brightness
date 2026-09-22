@@ -427,24 +427,38 @@ function Test-ManualOverride {
       Tolerance exists because monitors quantise and round-trip DDC values imprecisely; a
       1-2 point discrepancy is the hardware, not a person.
 
-      Returns a hashtable: IsOverridden, Reason.
+      A gap only means "the user did it" if we were watching. After we have not looked for
+      longer than ResyncAfterSeconds - the PC slept, the monitor was off, the daemon was
+      down - the panel may have been reset by its own power cycle, and a monitor waking at
+      its OSD default is far more common than a person pressing buttons in the dark. Then
+      the reading is a Resync: adopt it as the new baseline and ease on from it, rather
+      than standing down for OverrideMinutes on what was probably firmware.
+
+      Returns a hashtable: IsOverridden, Resync, Reason.
     #>
     param(
         [Parameter(Mandatory)][AllowNull()][System.Nullable[double]]$LastApplied,
         [Parameter(Mandatory)][AllowNull()][System.Nullable[double]]$ObservedBrightness,
-        [double]$TolerancePct = 3.0
+        [double]$TolerancePct = 3.0,
+        [double]$SecondsSinceLastLook = 0.0,
+        [double]$ResyncAfterSeconds   = [double]::PositiveInfinity
     )
 
-    if ($null -eq $LastApplied)        { return @{ IsOverridden = $false; Reason = 'no commanded value yet' } }
-    if ($null -eq $ObservedBrightness) { return @{ IsOverridden = $false; Reason = 'monitor level unreadable' } }
+    if ($null -eq $LastApplied)        { return @{ IsOverridden = $false; Resync = $false; Reason = 'no commanded value yet' } }
+    if ($null -eq $ObservedBrightness) { return @{ IsOverridden = $false; Resync = $false; Reason = 'monitor level unreadable' } }
 
     $gap = [Math]::Abs([double]$ObservedBrightness - [double]$LastApplied)
     if ($gap -gt $TolerancePct) {
-        return @{ IsOverridden = $true
-                  Reason = ('panel at {0:N0}%, we commanded {1:N0}% (gap {2:N0})' -f `
-                            [double]$ObservedBrightness, [double]$LastApplied, $gap) }
+        $desc = ('panel at {0:N0}%, we commanded {1:N0}% (gap {2:N0})' -f `
+                 [double]$ObservedBrightness, [double]$LastApplied, $gap)
+        if ($SecondsSinceLastLook -gt $ResyncAfterSeconds) {
+            return @{ IsOverridden = $false; Resync = $true
+                      Reason = ('{0} after {1:N0} min unwatched' -f $desc, ($SecondsSinceLastLook / 60.0)) }
+        }
+        return @{ IsOverridden = $true; Resync = $false; Reason = $desc }
     }
-    return @{ IsOverridden = $false; Reason = ('panel matches commanded level (gap {0:N0})' -f $gap) }
+    return @{ IsOverridden = $false; Resync = $false
+              Reason = ('panel matches commanded level (gap {0:N0})' -f $gap) }
 }
 
 # ---------------------------------------------------------------------------

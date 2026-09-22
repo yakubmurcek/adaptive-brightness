@@ -35,6 +35,7 @@ param(
     [double]$OverrideTolerancePct = 6.0,
     [int]   $OverrideMinutes      = 120,
     [double]$MaxCatchUpMinutes    = 10.0,
+    [double]$ResyncAfterMinutes   = 45.0,
     [int]   $TimeoutSec           = 10,
 
     # pacing
@@ -106,6 +107,7 @@ $config = [ordered]@{
     OverrideTolerancePct = $OverrideTolerancePct
     OverrideMinutes      = $OverrideMinutes
     MaxCatchUpMinutes    = $MaxCatchUpMinutes
+    ResyncAfterMinutes   = $ResyncAfterMinutes
     TickSeconds            = $TickSeconds
     IdleTickSeconds        = $IdleTickSeconds
     NightTickSeconds       = $NightTickSeconds

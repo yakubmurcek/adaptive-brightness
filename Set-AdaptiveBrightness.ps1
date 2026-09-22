@@ -55,6 +55,7 @@ param(
     [double]$OverrideTolerancePct,
     [int]   $OverrideMinutes,
     [double]$MaxCatchUpMinutes,
+    [double]$ResyncAfterMinutes,     # unwatched this long, a changed panel is a wake, not a touch
 
     # pacing (daemon mode)
     [int]   $TickSeconds,            # gap between ticks while something is moving
@@ -193,6 +194,7 @@ $Defaults = [ordered]@{
     OverrideTolerancePct = 6.0
     OverrideMinutes      = 120
     MaxCatchUpMinutes    = 10.0
+    ResyncAfterMinutes   = 45.0
     TickSeconds          = 20
     IdleTickSeconds      = 180
     NightTickSeconds     = 600
@@ -238,6 +240,14 @@ function Read-Config {
     if ($c.KtLow -ge $c.KtHigh) {
         Write-Log "KtLow >= KtHigh; falling back to 0.25 / 0.95" 'warn'
         $c.KtLow = 0.25; $c.KtHigh = 0.95
+    }
+    # an ordinary night tick on battery must never look like "we were away", or every real
+    # button press at night would be written off as a monitor waking up
+    $longestTick = [double]$c.NightTickSeconds * [Math]::Max(1.0, [double]$c.BatteryFactor)
+    if ($c.ResyncAfterMinutes * 60.0 -le $longestTick) {
+        $c.ResyncAfterMinutes = [Math]::Ceiling($longestTick / 60.0) + 15.0
+        Write-Log ("ResyncAfterMinutes is not longer than the slowest tick; raised to {0}" -f `
+                   $c.ResyncAfterMinutes) 'warn'
     }
     return $c
 }
@@ -631,7 +641,15 @@ function Invoke-BrightnessTick {
             # from *that* touch, and the level we ease on from later is the one the user
             # actually left, not the one they started from
             $again = Test-ManualOverride -LastApplied $lastApplied -ObservedBrightness $observedPct `
-                                         -TolerancePct $Cfg.OverrideTolerancePct
+                                         -TolerancePct $Cfg.OverrideTolerancePct `
+                                         -SecondsSinceLastLook $deltaSeconds `
+                                         -ResyncAfterSeconds ($Cfg.ResyncAfterMinutes * 60.0)
+            if ($again.Resync) {
+                # the panel power-cycled while we were away; follow it, but a wake is not a
+                # touch, so the override keeps its original deadline
+                $State.LastApplied = $observedPct
+                Write-Log ("panel moved while unwatched ({0}); adopting it" -f $again.Reason)
+            }
             if ($again.IsOverridden) {
                 $overrideUntil = $now.AddMinutes($Cfg.OverrideMinutes)
                 $State.OverrideUntil = $overrideUntil.ToString('o')
@@ -651,7 +669,17 @@ function Invoke-BrightnessTick {
         # ---- did the user touch the monitor ----
         if (-not $WhatIfOnly) {
             $ov = Test-ManualOverride -LastApplied $lastApplied -ObservedBrightness $observedPct `
-                                      -TolerancePct $Cfg.OverrideTolerancePct
+                                      -TolerancePct $Cfg.OverrideTolerancePct `
+                                      -SecondsSinceLastLook $deltaSeconds `
+                                      -ResyncAfterSeconds ($Cfg.ResyncAfterMinutes * 60.0)
+            if ($ov.Resync) {
+                # probably the monitor's own power cycle, not a person: take the panel as the
+                # new baseline and ease from it. Zeroing the budget matters - the capped
+                # catch-up allowance would otherwise spend itself in one visible jump.
+                Write-Log ("panel moved while unwatched ({0}); easing on from there" -f $ov.Reason) 'act'
+                $lastApplied = [double]$observedPct
+                $actuationDelta = 0.0
+            }
             if ($ov.IsOverridden) {
                 $State.OverrideUntil = $now.AddMinutes($Cfg.OverrideMinutes).ToString('o')
                 # adopt the panel's level so that when the override lapses we ease on from

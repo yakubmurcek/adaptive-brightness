@@ -13,6 +13,10 @@ Notable changes, newest first. Dates are the day the work landed on `main`.
   the deadband, day or night.
 - **Changed:** touching the monitor again during a manual override restarts the override from that
   touch, and the level it later eases on from is the one you actually left.
+- **Fixed:** a monitor waking from sleep at its own default level was mistaken for you pressing
+  its buttons, and the daemon stood down for two hours at the wrong brightness. After
+  `ResyncAfterMinutes` (default 45) without a look at the panel, a changed level is adopted as the
+  new baseline and faded from instead.
 
 ## 2026-09-22 — the resident daemon
 

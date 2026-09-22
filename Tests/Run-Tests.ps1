@@ -498,6 +498,25 @@ foreach ($i in 1..60) {
 Assert-True ($falsePositives -eq 0) 'our own adjustments never self-trigger override detection' `
     ("$falsePositives false positives")
 
+# 2026-09-22: 4.5 h unwatched (PC asleep), then the panel reads 63% against our 69%. That was
+# the monitor waking at its own level, and it cost a two-hour stand-down at 63% instead of 9%.
+$o = Test-ManualOverride -LastApplied 69 -ObservedBrightness 63 -TolerancePct 5 `
+        -SecondsSinceLastLook (4.5 * 3600) -ResyncAfterSeconds (45 * 60)
+Assert-True (-not $o.IsOverridden) 'a changed panel after a long unwatched gap is not an override'
+Assert-True $o.Resync 'it is a resync: adopt the panel as the new baseline'
+
+$o = Test-ManualOverride -LastApplied 69 -ObservedBrightness 63 -TolerancePct 5 `
+        -SecondsSinceLastLook 600 -ResyncAfterSeconds (45 * 60)
+Assert-True $o.IsOverridden 'the same gap one night tick after we last looked is still you'
+Assert-True (-not $o.Resync) 'and is not written off as a wake'
+
+$o = Test-ManualOverride -LastApplied 69 -ObservedBrightness 68 -TolerancePct 5 `
+        -SecondsSinceLastLook (4.5 * 3600) -ResyncAfterSeconds (45 * 60)
+Assert-True (-not $o.Resync) 'a panel that woke where we left it needs no resync'
+
+$o = Test-ManualOverride -LastApplied 69 -ObservedBrightness 30 -TolerancePct 5
+Assert-True $o.IsOverridden 'callers that pass no gap keep the old behaviour'
+
 
 # ===========================================================================
 Section 'tick pacing backs off when there is nothing to do'
