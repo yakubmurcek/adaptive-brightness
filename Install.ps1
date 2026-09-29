@@ -143,8 +143,10 @@ if ($null -ne $pwsh) { $exe = $pwsh.Source }
 #          used to pay that some 720 times a day. Paying it once per boot is what buys
 #          the much faster tick rate at a fraction of the power.
 # -Quiet  : the script writes its own UTF-8 log; no shell redirection needed
-$action = New-ScheduledTaskAction -Execute $exe `
-    -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Loop -Quiet' -f $script)
+# conhost --headless: -WindowStyle Hidden alone still leaves a window open when Windows
+#          Terminal is the default console host (Windows 11's default)
+$action = New-ScheduledTaskAction -Execute 'conhost.exe' `
+    -Argument ('--headless "{0}" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}" -Loop -Quiet' -f $exe, $script)
 
 $triggers = @(
     New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
