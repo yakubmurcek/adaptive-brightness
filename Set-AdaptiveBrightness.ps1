@@ -334,6 +334,59 @@ public class DDC {
 '@
 }
 
+# The panels snap to 100% the instant the screen wakes. Polling cannot catch that without
+# hammering the I2C bus, so a hidden window asks Windows to tell us: display turned on, or
+# the display layout changed. The daemon sleeps on Woke instead of Start-Sleep.
+if (-not ('DisplayWatch' -as [type])) {
+Add-Type -TypeDefinition @'
+using System;
+using System.Threading;
+using System.Runtime.InteropServices;
+public static class DisplayWatch {
+  public static readonly AutoResetEvent Woke = new AutoResetEvent(false);
+  delegate IntPtr WndProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+  struct WNDCLASS { public uint style; public WndProc proc; public int cls; public int wnd; public IntPtr inst; public IntPtr icon; public IntPtr cursor; public IntPtr bg; public string menu; public string name; }
+  [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w; public IntPtr l; public uint t; public int x; public int y; }
+  [StructLayout(LayoutKind.Sequential)] struct PBS { public Guid id; public uint len; public uint data; }
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern ushort RegisterClassW(ref WNDCLASS c);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr CreateWindowExW(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr p);
+  [DllImport("user32.dll")] static extern IntPtr DefWindowProcW(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern int GetMessageW(out MSG m, IntPtr h, uint a, uint b);
+  [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+  [DllImport("user32.dll")] static extern IntPtr DispatchMessageW(ref MSG m);
+  [DllImport("user32.dll")] static extern IntPtr RegisterPowerSettingNotification(IntPtr h, ref Guid g, uint flags);
+  [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandleW(IntPtr n);
+  static Guid ConsoleDisplayState = new Guid("6FE69556-704A-47A0-8F24-C28D936FDA47");
+  static WndProc keep;
+  static Thread thread;
+  public static bool Started { get { return thread != null; } }
+  public static void Start() {
+    if (thread != null) return;
+    thread = new Thread(Pump); thread.IsBackground = true; thread.Start();
+  }
+  static IntPtr Proc(IntPtr h, uint m, IntPtr w, IntPtr l) {
+    if (m == 0x0218 && w.ToInt64() == 0x8013) {               // WM_POWERBROADCAST / PBT_POWERSETTINGCHANGE
+      PBS s = (PBS)Marshal.PtrToStructure(l, typeof(PBS));
+      if (s.id == ConsoleDisplayState && s.data == 1) Woke.Set(); // 1 = display on
+    } else if (m == 0x007E) {                                   // WM_DISPLAYCHANGE
+      Woke.Set();
+    }
+    return DefWindowProcW(h, m, w, l);
+  }
+  static void Pump() {
+    keep = Proc;
+    WNDCLASS c = new WNDCLASS(); c.proc = keep; c.name = "AdaptiveBrightnessDisplayWatch"; c.inst = GetModuleHandleW(IntPtr.Zero);
+    RegisterClassW(ref c);
+    IntPtr hwnd = CreateWindowExW(0, c.name, c.name, 0x80000000, 0, 0, 0, 0, IntPtr.Zero, IntPtr.Zero, c.inst, IntPtr.Zero); // WS_POPUP, never shown
+    RegisterPowerSettingNotification(hwnd, ref ConsoleDisplayState, 0);
+    MSG msg;
+    while (GetMessageW(out msg, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref msg); DispatchMessageW(ref msg); }
+  }
+}
+'@
+}
+
 function Test-OnBattery {
     <#
       True only when we are certain we are running on battery.
@@ -372,6 +425,7 @@ function Get-MonitorReadings {
       Reads every DDC-capable monitor. Returns objects carrying the live handle, so the
       caller must dispose them with Close-MonitorReadings.
     #>
+    param([switch]$Quiet)
     $readings = New-Object System.Collections.ArrayList
     foreach ($m in (Get-PhysicalMonitorHandles)) {
         $name = ([String]::new($m.szDescription)).Trim([char]0)
@@ -387,7 +441,7 @@ function Get-MonitorReadings {
             })
         } else {
             [void][DDC]::DestroyPhysicalMonitor($m.hPhysicalMonitor)
-            Write-Log "  $name : no DDC/CI brightness support, skipped" 'warn'
+            if (-not $Quiet) { Write-Log "  $name : no DDC/CI brightness support, skipped" 'warn' }
         }
     }
     return $readings
@@ -808,8 +862,48 @@ Write-Log ("daemon started (pid {0}): tick {1}s, idle {2}s, night {3}s, sky ever
            $Cfg.WeatherIntervalMinutes) 'act'
 Save-Log
 
+# Exactly one daemon. Stopping the scheduled task kills its conhost wrapper but not this
+# process, so every restart used to leave the old copy running - stale code and stale state
+# fighting the new one over the panels. The newest start wins; older copies are ended.
+Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'Set-AdaptiveBrightness\.ps1' -and $_.CommandLine -match '-Loop' } |
+    ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        Write-Log ("ended older daemon (pid {0})" -f $_.ProcessId) 'act'
+    }
+
 $sleepSeconds  = [double]$Cfg.TickSeconds
 $lastHeartbeat = Get-Date
+[DisplayWatch]::Start()
+
+function Invoke-WakeGuard {
+    <#
+      Right after the screen wakes, keep looking for a few seconds and slam any panel that
+      snapped to max straight back to our level. A panel can take a second or two to answer
+      DDC/CI after waking, and some reset a beat after they first answer, so one write is
+      not enough - the whole window is watched.
+    #>
+    param([double]$WindowSeconds = 30.0, [int]$EveryMs = 150)
+    if ($State.Paused -or $null -eq $State.LastApplied) { return }
+    $level = [double]$State.LastApplied
+    if ($level -ge 99.5 - $Cfg.OverrideTolerancePct) { return }
+    $until = (Get-Date).AddSeconds($WindowSeconds)
+    $fixed = 0
+    while ((Get-Date) -lt $until) {
+        $readings = @(Get-MonitorReadings -Quiet)
+        try {
+            foreach ($r in $readings) {
+                if ($null -ne $r.Percent -and $r.Percent -ge 99.5) {
+                    $raw = Set-MonitorPercent -Reading $r -Percent $level -StepMs 0
+                    $fixed++
+                    Write-Log ("display woke; {0} snapped to max, restored {1:N0}% ({2} raw)" -f $r.Name, $level, $raw) 'act'
+                }
+            }
+        } finally { Close-MonitorReadings $readings }
+        [void][DisplayWatch]::Woke.WaitOne($EveryMs)
+    }
+    if ($fixed -eq 0) { Write-Log "display woke; panels stayed at their level" }
+}
 
 while ($true) {
     $tickNow = Get-Date
@@ -854,5 +948,9 @@ while ($true) {
     if ($heartbeatDue) { $lastHeartbeat = $tickNow }
     Save-Log -DropRoutine:(-not $heartbeatDue)
 
-    Start-Sleep -Seconds ([int][Math]::Max(1, [Math]::Round($sleepSeconds)))
+    $sleepMs = [int][Math]::Max(1000, [Math]::Round($sleepSeconds * 1000))
+    if ([DisplayWatch]::Woke.WaitOne($sleepMs)) {
+        Invoke-WakeGuard
+        Save-Log
+    }
 }
