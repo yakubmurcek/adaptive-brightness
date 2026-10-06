@@ -142,8 +142,8 @@ The pace follows the work rather than the clock:
 | Situation | Tick | Why |
 |---|---|---|
 | Mid-move, or target outside the deadband | **20 s** | You can see this happening; track it closely. |
-| Settled | doubles 20 → 40 → 80 s, capped at **180 s** | Nothing is happening. Back off, but stay quick to wake. |
-| Sun below `RampLowDeg`, settled | **600 s** | Below the ramp the altitude term is pinned; only the calendar can change it. A correction still in progress keeps the 20 s pace. |
+| Settled | doubles 20 → 40 → **60 s** cap | Nothing is happening. Back off, but stay quick to wake. |
+| Sun below `RampLowDeg`, settled | **60 s** | Below the ramp the altitude term is pinned; only the calendar can change it. A correction still in progress keeps the 20 s pace. |
 | On battery | every interval × **3** | A laptop away from the wall would rather have slightly laggy brightness. |
 
 The network call is gated separately, at **once per 10 minutes**. Open-Meteo publishes on roughly
@@ -245,8 +245,8 @@ Everything lives in `config.json`. Changes take effect on the next tick — no r
 | `MaxCatchUpMinutes` | `10.0` | Caps the change budget after a long gap. |
 | `ResyncAfterMinutes` | `45.0` | Unwatched this long, a changed panel is a wake-up, not you. |
 | `TickSeconds` | `20` | Gap between ticks while something is moving. |
-| `IdleTickSeconds` | `180` | Gap once the panel has settled. |
-| `NightTickSeconds` | `600` | Gap once the sun is below `RampLowDeg`. |
+| `IdleTickSeconds` | `60` | Gap once the panel has settled. |
+| `NightTickSeconds` | `60` | Gap once the sun is below `RampLowDeg`. |
 | `WeatherIntervalMinutes` | `10.0` | How often the sky is re-measured over the network. |
 | `BatteryFactor` | `3.0` | Every gap is multiplied by this on battery. `1.0` disables it. |
 | `HeartbeatMinutes` | `30` | Log an uneventful tick at least this often. |
@@ -321,7 +321,9 @@ cloudy can still read bright (broken cloud with the sun visible).
 - **Multi-monitor setups all get the same level**, and monitors reporting no DDC/CI support are
   skipped. Laptop internal panels generally do not expose DDC/CI; Windows handles those natively.
 - **Override detection cannot tell you from another program.** Anything else that sets brightness
-  over DDC/CI looks like a manual change and will trigger a 2-hour stand-down.
+  over DDC/CI looks like a manual change and will trigger a 2-hour stand-down. The one exception is a jump
+  to exactly 100%: these panels snap to max on their own after the screen wakes, so a jump to max is
+  written straight back instead. Setting 100% by hand gets undone the same way; use `-Pause` for that.
 - **The first grey morning after a fresh install** briefly runs on the neutral fallback until the
   sun clears ~5° and a real reading arrives. Afterwards the overnight hold prevents this.
 - **DDC/CI is slow and not always reliable.** Some monitors ignore rapid writes or drop them under

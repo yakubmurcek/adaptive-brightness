@@ -434,30 +434,41 @@ function Test-ManualOverride {
       the reading is a Resync: adopt it as the new baseline and ease on from it, rather
       than standing down for OverrideMinutes on what was probably firmware.
 
-      Returns a hashtable: IsOverridden, Resync, Reason.
+      A panel that lands on exactly its maximum while we commanded less is a Reset, watched
+      or not. These MSI panels snap to 100% on their own (display wake, input re-sync)
+      many times a day, and reading that as a touch left them at full brightness for the
+      whole override window. A person nudging the OSD lands anywhere; a reset lands on max.
+      The caller writes our level straight back instead of standing down.
+
+      Returns a hashtable: IsOverridden, Resync, Reset, Reason.
     #>
     param(
         [Parameter(Mandatory)][AllowNull()][System.Nullable[double]]$LastApplied,
         [Parameter(Mandatory)][AllowNull()][System.Nullable[double]]$ObservedBrightness,
         [double]$TolerancePct = 3.0,
         [double]$SecondsSinceLastLook = 0.0,
-        [double]$ResyncAfterSeconds   = [double]::PositiveInfinity
+        [double]$ResyncAfterSeconds   = [double]::PositiveInfinity,
+        [double]$PanelMaxPct          = 100.0
     )
 
-    if ($null -eq $LastApplied)        { return @{ IsOverridden = $false; Resync = $false; Reason = 'no commanded value yet' } }
-    if ($null -eq $ObservedBrightness) { return @{ IsOverridden = $false; Resync = $false; Reason = 'monitor level unreadable' } }
+    if ($null -eq $LastApplied)        { return @{ IsOverridden = $false; Resync = $false; Reset = $false; Reason = 'no commanded value yet' } }
+    if ($null -eq $ObservedBrightness) { return @{ IsOverridden = $false; Resync = $false; Reset = $false; Reason = 'monitor level unreadable' } }
 
     $gap = [Math]::Abs([double]$ObservedBrightness - [double]$LastApplied)
     if ($gap -gt $TolerancePct) {
         $desc = ('panel at {0:N0}%, we commanded {1:N0}% (gap {2:N0})' -f `
                  [double]$ObservedBrightness, [double]$LastApplied, $gap)
+        if ([double]$ObservedBrightness -ge ($PanelMaxPct - 0.5) -and [double]$LastApplied -lt [double]$ObservedBrightness) {
+            return @{ IsOverridden = $false; Resync = $false; Reset = $true
+                      Reason = ('{0}; panel reset to max' -f $desc) }
+        }
         if ($SecondsSinceLastLook -gt $ResyncAfterSeconds) {
-            return @{ IsOverridden = $false; Resync = $true
+            return @{ IsOverridden = $false; Resync = $true; Reset = $false
                       Reason = ('{0} after {1:N0} min unwatched' -f $desc, ($SecondsSinceLastLook / 60.0)) }
         }
-        return @{ IsOverridden = $true; Resync = $false; Reason = $desc }
+        return @{ IsOverridden = $true; Resync = $false; Reset = $false; Reason = $desc }
     }
-    return @{ IsOverridden = $false; Resync = $false
+    return @{ IsOverridden = $false; Resync = $false; Reset = $false
               Reason = ('panel matches commanded level (gap {0:N0})' -f $gap) }
 }
 

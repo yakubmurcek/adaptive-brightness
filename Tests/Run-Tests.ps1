@@ -517,6 +517,16 @@ Assert-True (-not $o.Resync) 'a panel that woke where we left it needs no resync
 $o = Test-ManualOverride -LastApplied 69 -ObservedBrightness 30 -TolerancePct 5
 Assert-True $o.IsOverridden 'callers that pass no gap keep the old behaviour'
 
+$o = Test-ManualOverride -LastApplied 10 -ObservedBrightness 100 -TolerancePct 6 -SecondsSinceLastLook 600
+Assert-True (-not $o.IsOverridden) 'a panel snapping to 100% is not a manual override'
+Assert-True $o.Reset 'it is a reset: write our level back'
+
+$o = Test-ManualOverride -LastApplied 10 -ObservedBrightness 71 -TolerancePct 6 -SecondsSinceLastLook 600
+Assert-True ($o.IsOverridden -and -not $o.Reset) 'a jump to a non-max level is still a touch'
+
+$o = Test-ManualOverride -LastApplied 100 -ObservedBrightness 100 -TolerancePct 6
+Assert-True (-not $o.Reset) 'sitting at 100% because we commanded it is not a reset'
+
 
 # ===========================================================================
 Section 'tick pacing backs off when there is nothing to do'
