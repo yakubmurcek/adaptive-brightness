@@ -323,7 +323,8 @@ cloudy can still read bright (broken cloud with the sun visible).
 - **Override detection cannot tell you from another program.** Anything else that sets brightness
   over DDC/CI looks like a manual change and will trigger a 2-hour stand-down. The one exception is a jump
   to exactly 100%: these panels snap to max on their own after the screen wakes, so a jump to max is
-  written straight back instead. Setting 100% by hand gets undone the same way; use `-Pause` for that.
+  written straight back instead, within a
+  fraction of a second of Windows reporting the screen on. Setting 100% by hand gets undone the same way; use `-Pause` for that.
 - **The first grey morning after a fresh install** briefly runs on the neutral fallback until the
   sun clears ~5° and a real reading arrives. Afterwards the overnight hold prevents this.
 - **DDC/CI is slow and not always reliable.** Some monitors ignore rapid writes or drop them under

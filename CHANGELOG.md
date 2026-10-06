@@ -2,6 +2,14 @@
 
 Notable changes, newest first. Dates are the day the work landed on `main`.
 
+## 2026-10-06 — restore within a blink of the screen waking
+
+- **Fixed:** a panel's snap to 100% on wake is now caught the moment Windows reports the display on
+  (or a display layout change), not on the next tick. For 30 s after a wake the panels are read every
+  150 ms and any panel at max is written straight back.
+- **Fixed:** stopping the scheduled task left the old daemon running, so restarts stacked copies (3
+  were found) that fought over the panels with stale state. A new daemon now ends any older one.
+
 ## 2026-10-06 — a panel snapping to 100% is put back, not obeyed
 
 - **Fixed:** both MSI panels reset themselves to 100% after almost every screen wake (22 of 24
