@@ -2,6 +2,14 @@
 
 Notable changes, newest first. Dates are the day the work landed on `main`.
 
+## 2026-10-06 — a panel snapping to 100% is put back, not obeyed
+
+- **Fixed:** both MSI panels reset themselves to 100% after almost every screen wake (22 of 24
+  jumps in three days followed a display power event). The script read each one as you touching
+  the monitor and stood down for 2 h, leaving the screens at full brightness. A jump to exactly the
+  panel's max is now a reset: the last level is written straight back, no stand-down.
+- **Changed:** idle and night ticks are 60 s (were 180 s and 600 s), so a reset lasts at most a minute.
+
 ## 2026-09-22 — corrections glide instead of lurching
 
 - **Fixed:** a tick where no monitor answered DDC/CI crashed (`property 'Count' cannot be found`)

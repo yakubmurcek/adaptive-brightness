@@ -196,8 +196,8 @@ $Defaults = [ordered]@{
     MaxCatchUpMinutes    = 10.0
     ResyncAfterMinutes   = 45.0
     TickSeconds          = 20
-    IdleTickSeconds      = 180
-    NightTickSeconds     = 600
+    IdleTickSeconds      = 60
+    NightTickSeconds     = 60
     WeatherIntervalMinutes = 10.0
     BatteryFactor        = 3.0
     HeartbeatMinutes     = 30
@@ -420,6 +420,21 @@ function Set-MonitorPercent {
     return $target
 }
 
+function Restore-PanelLevel {
+    <#
+      Undoes a panel's own snap to max in one write - no glide, since every extra tick at
+      100% is the glare we are removing. Only panels that actually jumped are touched.
+    #>
+    param($Readings, [double]$Percent, [string]$Reason)
+    Write-Log ("{0}; restoring {1:N0}%" -f $Reason, $Percent) 'act'
+    foreach ($r in $Readings) {
+        if ($null -eq $r.Percent -or [Math]::Abs($r.Percent - $Percent) -le $Cfg.OverrideTolerancePct) { continue }
+        $raw = Set-MonitorPercent -Reading $r -Percent $Percent -StepMs 0
+        Write-Log ("  {0} : {1} -> {2} raw (range {3}-{4})" -f $r.Name, $r.Cur, $raw, $r.Min, $r.Max)
+        $r.Cur = $raw; $r.Percent = $Percent
+    }
+}
+
 # ---------------------------------------------------------------------------
 # irradiance
 # ---------------------------------------------------------------------------
@@ -596,6 +611,9 @@ function Invoke-BrightnessTick {
     if (-not $WhatIfOnly -or $Status) {
         $readings = @(Get-MonitorReadings)
         if ($readings.Count -gt 0) { $observedPct = $readings[0].Percent }
+        # a reset can hit either panel; let one that snapped to max speak for the set
+        $atMax = @($readings | Where-Object { $null -ne $_.Percent -and $_.Percent -ge 99.5 })
+        if ($atMax.Count -gt 0) { $observedPct = $atMax[0].Percent }
     }
 
     try {
@@ -644,6 +662,10 @@ function Invoke-BrightnessTick {
                                          -TolerancePct $Cfg.OverrideTolerancePct `
                                          -SecondsSinceLastLook $deltaSeconds `
                                          -ResyncAfterSeconds ($Cfg.ResyncAfterMinutes * 60.0)
+            if ($again.Reset) {
+                # the panel snapped to max by itself; put back the level the user chose
+                Restore-PanelLevel -Readings $readings -Percent $lastApplied -Reason $again.Reason
+            }
             if ($again.Resync) {
                 # the panel power-cycled while we were away; follow it, but a wake is not a
                 # touch, so the override keeps its original deadline
@@ -672,6 +694,9 @@ function Invoke-BrightnessTick {
                                       -TolerancePct $Cfg.OverrideTolerancePct `
                                       -SecondsSinceLastLook $deltaSeconds `
                                       -ResyncAfterSeconds ($Cfg.ResyncAfterMinutes * 60.0)
+            if ($ov.Reset) {
+                Restore-PanelLevel -Readings $readings -Percent $lastApplied -Reason $ov.Reason
+            }
             if ($ov.Resync) {
                 # probably the monitor's own power cycle, not a person: take the panel as the
                 # new baseline and ease from it. Zeroing the budget matters - the capped
