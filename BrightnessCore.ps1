@@ -453,7 +453,8 @@ function Test-ManualOverride {
         not moved since, nobody touched it. This alone caused a 2 h stand-down every 2 h all
         night ("panel at 71%, we commanded 65%").
 
-      Returns a hashtable: IsOverridden, Resync, Reset, Reason.
+      Returns a hashtable: IsOverridden, Resync, Reset, Reason, and Ignored = true when the
+      resync is a panel that ignored our write.
     #>
     param(
         [Parameter(Mandatory)][AllowNull()][System.Nullable[double]]$LastApplied,
@@ -498,7 +499,7 @@ function Test-ManualOverride {
                       Reason = ('{0} after {1:N0} min unwatched' -f $desc, ($SecondsSinceLastLook / 60.0)) }
         }
         if ($null -ne $LastSeen -and [Math]::Abs([double]$ObservedBrightness - [double]$LastSeen) -le $TolerancePct) {
-            return @{ IsOverridden = $false; Resync = $true; Reset = $false
+            return @{ IsOverridden = $false; Resync = $true; Reset = $false; Ignored = $true
                       Reason = ('{0}; unchanged since our last look, so it ignored our write' -f $desc) }
         }
         return @{ IsOverridden = $true; Resync = $false; Reset = $false; Reason = $desc }

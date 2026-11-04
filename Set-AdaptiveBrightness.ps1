@@ -103,7 +103,8 @@ $script:LogLines = New-Object System.Collections.ArrayList
 # per-process memory of the panel, for telling a person from the hardware
 $script:SkipLogged = $false     # the "no DDC/CI support" warning is out for this stretch
 $script:PanelAway  = $false     # no panel answered at our last look
-$script:Readable   = 0          # how many panels answered at our last look
+$script:Readable   = -1         # how many panels answered at our last look (-1: no look yet)
+$script:Ignoring   = $null      # the panel ignores writes: the level it sticks at, and since when
 $script:LastWakeAt = $null      # when Windows last reported the display on
 
 function Write-Log {
@@ -735,7 +736,7 @@ function Invoke-BrightnessTick {
         if ($null -ne $State.LastSeen) { $lastSeen = [double]$State.LastSeen }
         # a panel that was not answering at our last look - all of them, or one of two that
         # was switched to another computer - may come back anywhere, and that is not you
-        $wasAway = ($null -ne $observedPct -and ($script:PanelAway -or $readings.Count -gt $script:Readable))
+        $wasAway = ($null -ne $observedPct -and ($script:PanelAway -or ($script:Readable -ge 0 -and $readings.Count -gt $script:Readable)))
         if ($wasAway -and $script:PanelAway) { Write-Log 'a monitor answers DDC/CI again' }
         if (-not $WhatIfOnly) { $script:Readable = $readings.Count }
         if ($null -ne $observedPct) { $script:PanelAway = $false }
@@ -801,6 +802,10 @@ function Invoke-BrightnessTick {
                 Write-Log ("panel moved on its own ({0}); easing on from there" -f $ov.Reason) 'act'
                 $lastApplied = [double]$observedPct
                 $actuationDelta = 0.0
+                if ($ov.ContainsKey('Ignored') -and $ov.Ignored) {
+                    $script:Ignoring = @{ Level = [double]$observedPct; At = $now }
+                    Write-Log 'panel ignores our writes (asleep?); holding until it moves or the screen wakes' 'warn'
+                }
             }
             if ($ov.IsOverridden) {
                 $State.OverrideUntil = $now.AddMinutes($Cfg.OverrideMinutes).ToString('o')
@@ -821,6 +826,21 @@ function Invoke-BrightnessTick {
             # no panel to talk to. Report it as settled so we stop spinning the DDC bus, and
             # return before logging a move that cannot happen.
             return @{ Changed = $false; WithinDeadband = $true; SunAltitude = $alt; Stop = $false }
+        }
+
+        # a panel that ignores writes would otherwise get a write and two log lines every 20 s
+        # all night; hold until it moves or the screen wakes, then try again
+        if ($null -ne $script:Ignoring) {
+            $moved = ($null -eq $observedPct -or
+                      [Math]::Abs([double]$observedPct - $script:Ignoring.Level) -gt $Cfg.OverrideTolerancePct)
+            $wokeSince = ($null -ne $script:LastWakeAt -and $script:LastWakeAt -gt $script:Ignoring.At)
+            if ($moved -or $wokeSince) {
+                $script:Ignoring = $null
+            } else {
+                $State.LastApplied = $lastApplied
+                Save-StandDown
+                return @{ Changed = $false; WithinDeadband = $true; SunAltitude = $alt; Stop = $false }
+            }
         }
 
         # ---- decide the move ----

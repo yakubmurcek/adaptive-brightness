@@ -534,6 +534,7 @@ $o = Test-ManualOverride -LastApplied 65 -ObservedBrightness 71.2 -TolerancePct 
         -LastSeen 71.2
 Assert-True (-not $o.IsOverridden) 'a panel that ignored our write and has not moved is not a touch'
 Assert-True $o.Resync 'it is a resync: ease on from where the panel really is'
+Assert-True $o.Ignored 'and it says the panel ignored the write, so the caller can stop retrying'
 $o = Test-ManualOverride -LastApplied 65 -ObservedBrightness 30 -TolerancePct 6 -SecondsSinceLastLook 120 `
         -LastSeen 65
 Assert-True $o.IsOverridden 'a panel that moved since our last look is still you'

@@ -10,7 +10,7 @@ clearly a person.
 
 - **Fixed:** a sleeping panel that answered reads but ignored writes looked like a touch every
   2 h all night. The level the panel reports after each write is now remembered; a panel that has
-  not moved since is followed, not obeyed.
+  not moved since is followed, not obeyed, and left alone until it moves or the screen wakes.
 - **Fixed:** a panel that was unreadable at the last look (asleep, or switched to another input)
   and came back at a different level was taken as a touch. It is now adopted as the new start.
 - **Fixed:** a panel settling at 97-98% a few seconds after a wake was a touch, because only an
