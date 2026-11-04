@@ -103,6 +103,7 @@ $script:LogLines = New-Object System.Collections.ArrayList
 # per-process memory of the panel, for telling a person from the hardware
 $script:SkipLogged = $false     # the "no DDC/CI support" warning is out for this stretch
 $script:PanelAway  = $false     # no panel answered at our last look
+$script:Readable   = 0          # how many panels answered at our last look
 $script:LastWakeAt = $null      # when Windows last reported the display on
 
 function Write-Log {
@@ -732,8 +733,11 @@ function Invoke-BrightnessTick {
         if ($null -ne $script:LastWakeAt) { $sinceWake = ($now - $script:LastWakeAt).TotalSeconds }
         $lastSeen = $null
         if ($null -ne $State.LastSeen) { $lastSeen = [double]$State.LastSeen }
-        $wasAway = ($script:PanelAway -and $null -ne $observedPct)
-        if ($wasAway) { Write-Log 'a monitor answers DDC/CI again' }
+        # a panel that was not answering at our last look - all of them, or one of two that
+        # was switched to another computer - may come back anywhere, and that is not you
+        $wasAway = ($null -ne $observedPct -and ($script:PanelAway -or $readings.Count -gt $script:Readable))
+        if ($wasAway -and $script:PanelAway) { Write-Log 'a monitor answers DDC/CI again' }
+        if (-not $WhatIfOnly) { $script:Readable = $readings.Count }
         if ($null -ne $observedPct) { $script:PanelAway = $false }
         if (-not $WhatIfOnly -and $readings.Count -eq 0) {
             # asleep, switched to another computer, or a laptop's internal eDP: say so once

@@ -14,7 +14,7 @@ clearly a person.
 - **Fixed:** a panel that was unreadable at the last look (asleep, or switched to another input)
   and came back at a different level was taken as a touch. It is now adopted as the new start.
 - **Fixed:** a panel settling at 97-98% a few seconds after a wake was a touch, because only an
-  exact 100% counted as a reset. Within 60 s of a wake, near max is a reset and anything else is
+  exact 100% counted as a reset. Within 60 s of a wake, within 3 points of max is a reset and anything else is
   adopted.
 - **Changed:** while no monitor answers DDC/CI, the log says so once instead of three lines every
   minute.

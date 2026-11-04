@@ -444,8 +444,8 @@ function Test-ManualOverride {
       seen on a real two-computer desk (2026-10-09..11: 21 "manual" stand-downs in 40 h,
       half the time spent standing down, until the daemon was switched off):
 
-      - Just after a display wake (WakeGraceSeconds) the panel is still settling. Near max
-        is a reset; anything else is a resync. 10 of the 21 came within a minute of a wake.
+      - Just after a display wake (WakeGraceSeconds) the panel is still settling. Within 3
+        points of max is a reset; anything else is a resync. 10 of the 21 came within a minute of a wake.
       - The panel was unreadable at our last look (asleep, or its input switched to another
         computer) and came back elsewhere. Whatever moved it, we never saw a person do it.
       - The panel ignored our last write, which a sleeping panel does while still answering
@@ -480,7 +480,9 @@ function Test-ManualOverride {
                       Reason = ('{0}; panel reset to max' -f $desc) }
         }
         if ($SecondsSinceWake -le $WakeGraceSeconds) {
-            if ([double]$ObservedBrightness -ge ($PanelMaxPct - $TolerancePct) -and [double]$LastApplied -lt [double]$ObservedBrightness) {
+            # a fixed 3-point band, not the tolerance: a person raising it to 95% just after
+            # waking the screen meant 95%, but 97-98% is where these panels settle
+            if ([double]$ObservedBrightness -ge ($PanelMaxPct - 3.0) -and [double]$LastApplied -lt [double]$ObservedBrightness) {
                 return @{ IsOverridden = $false; Resync = $false; Reset = $true
                           Reason = ('{0}; near max {1:N0} s after a display wake' -f $desc, $SecondsSinceWake) }
             }

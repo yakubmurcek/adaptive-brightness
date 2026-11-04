@@ -552,6 +552,9 @@ Assert-True ($o.Resync -and -not $o.IsOverridden) 'any other level just after a 
 $o = Test-ManualOverride -LastApplied 27 -ObservedBrightness 53 -TolerancePct 6 -SecondsSinceLastLook 60 `
         -LastSeen 27 -SecondsSinceWake 600
 Assert-True $o.IsOverridden 'ten minutes after a wake a change is you again'
+$o = Test-ManualOverride -LastApplied 53 -ObservedBrightness 95 -TolerancePct 6 -SecondsSinceLastLook 60 `
+        -LastSeen 53 -SecondsSinceWake 15
+Assert-True (-not $o.Reset) 'raising it to 95% just after a wake is not written back as a reset'
 
 # 10-10 19:08: the panel was on the other computer's input at our last look
 $o = Test-ManualOverride -LastApplied 98 -ObservedBrightness 53 -TolerancePct 6 -SecondsSinceLastLook 60 `
