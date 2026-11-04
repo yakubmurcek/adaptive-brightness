@@ -527,6 +527,40 @@ Assert-True ($o.IsOverridden -and -not $o.Reset) 'a jump to a non-max level is s
 $o = Test-ManualOverride -LastApplied 100 -ObservedBrightness 100 -TolerancePct 6
 Assert-True (-not $o.Reset) 'sitting at 100% because we commanded it is not a reset'
 
+# 2026-10-09..11 on a two-computer desk: 21 stand-downs in 40 h, none of them clearly a person.
+
+# night of 10-09: a sleeping panel answered reads but ignored our writes, every 2 h all night
+$o = Test-ManualOverride -LastApplied 65 -ObservedBrightness 71.2 -TolerancePct 6 -SecondsSinceLastLook 120 `
+        -LastSeen 71.2
+Assert-True (-not $o.IsOverridden) 'a panel that ignored our write and has not moved is not a touch'
+Assert-True $o.Resync 'it is a resync: ease on from where the panel really is'
+$o = Test-ManualOverride -LastApplied 65 -ObservedBrightness 30 -TolerancePct 6 -SecondsSinceLastLook 120 `
+        -LastSeen 65
+Assert-True $o.IsOverridden 'a panel that moved since our last look is still you'
+$o = Test-ManualOverride -LastApplied 65 -ObservedBrightness 30 -TolerancePct 6 -SecondsSinceLastLook 120 `
+        -LastSeen 71
+Assert-True $o.IsOverridden 'even when our previous write was ignored'
+
+# 10-10 19:01: 15 s after a wake the panel settles at 98%, not quite max
+$o = Test-ManualOverride -LastApplied 53 -ObservedBrightness 98 -TolerancePct 6 -SecondsSinceLastLook 60 `
+        -LastSeen 53 -SecondsSinceWake 15
+Assert-True ($o.Reset -and -not $o.IsOverridden) 'near max just after a wake is a reset, written straight back'
+# 10-10 18:19: 20 s after a wake the panel reads 53% against our 27%
+$o = Test-ManualOverride -LastApplied 27 -ObservedBrightness 53 -TolerancePct 6 -SecondsSinceLastLook 60 `
+        -LastSeen 27 -SecondsSinceWake 20
+Assert-True ($o.Resync -and -not $o.IsOverridden) 'any other level just after a wake is adopted, not a touch'
+$o = Test-ManualOverride -LastApplied 27 -ObservedBrightness 53 -TolerancePct 6 -SecondsSinceLastLook 60 `
+        -LastSeen 27 -SecondsSinceWake 600
+Assert-True $o.IsOverridden 'ten minutes after a wake a change is you again'
+
+# 10-10 19:08: the panel was on the other computer's input at our last look
+$o = Test-ManualOverride -LastApplied 98 -ObservedBrightness 53 -TolerancePct 6 -SecondsSinceLastLook 60 `
+        -LastSeen 98 -PanelWasAway
+Assert-True ($o.Resync -and -not $o.IsOverridden) 'a panel back from being unreadable is adopted, not a touch'
+
+$o = Test-ManualOverride -LastApplied 53 -ObservedBrightness 53 -TolerancePct 6 -LastSeen 20 -SecondsSinceWake 5 -PanelWasAway
+Assert-True (-not $o.IsOverridden -and -not $o.Resync -and -not $o.Reset) 'a panel at our level needs nothing, whatever happened'
+
 
 # ===========================================================================
 Section 'tick pacing backs off when there is nothing to do'

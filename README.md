@@ -47,7 +47,7 @@ The parts worth a look if you are reading this as code rather than as a utility:
 
 - **The decision logic is pure.** [`BrightnessCore.ps1`](BrightnessCore.ps1) does no I/O — no
   network, no DDC, no clock reads — so a simulated eight-hour broken-cloud day, a twenty-hour
-  network outage and a full year of sunrises all run in milliseconds. **154 tests**, none of which
+  network outage and a full year of sunrises all run in milliseconds. **181 tests**, none of which
   need a monitor.
 - **Clouds are measured, not inferred.** The clearness index `Kt` is a *ratio*, so it means the
   same thing in January as in July, in Oslo as in Nairobi. [Why that matters ↓](#how-it-works)
@@ -186,6 +186,16 @@ power cycle at their own default level, so after `ResyncAfterMinutes` (default 4
 the panel — the PC slept, the monitor was off — a changed level is taken as the new starting point
 and faded from, not treated as a two-hour "hands off".
 
+Three more things move a panel without you, and none of them stand it down:
+
+- **In the first 60 s after the screen wakes** the panel is still settling. A level
+  near max is written straight back; any other level is taken as the new starting point.
+- **The panel was unreadable at the last look**: asleep, or its input switched to another
+  computer. Whatever level it comes back at is adopted, not blamed on you.
+- **The panel ignored the last write.** A sleeping panel often still answers reads while ignoring
+  writes. The level it reports after each write is remembered, so a panel that simply has not
+  moved is never mistaken for a touch.
+
 ```powershell
 .\Set-AdaptiveBrightness.ps1 -Pause           # stop adjusting; survives reboots
 .\Set-AdaptiveBrightness.ps1 -Resume
@@ -272,7 +282,7 @@ Want it to react faster to clouds, at the cost of more movement? Lower `KtTauMin
 ## Tests
 
 ```powershell
-pwsh -File .\Tests\Run-Tests.ps1              # 123 tests, no monitor or network needed
+pwsh -File .\Tests\Run-Tests.ps1              # 150 tests, no monitor or network needed
 pwsh -File .\Tests\Run-IntegrationTests.ps1   # 31 tests against the real monitor
 ```
 
@@ -337,7 +347,7 @@ cloudy can still read bright (broken cloud with the sun visible).
 | [`BrightnessCore.ps1`](BrightnessCore.ps1) | The model. Pure functions, no I/O — this is the interesting half. |
 | [`Set-AdaptiveBrightness.ps1`](Set-AdaptiveBrightness.ps1) | Plumbing: config, state, HTTP, DDC/CI, logging, the daemon loop. |
 | [`Install.ps1`](Install.ps1) / [`Uninstall.ps1`](Uninstall.ps1) | Scheduled-task setup and removal. |
-| [`Tests/`](Tests) | 123 unit tests (no hardware) and 31 integration tests (real monitor). |
+| [`Tests/`](Tests) | 150 unit tests (no hardware) and 31 integration tests (real monitor). |
 | [`Tools/New-CurveChart.ps1`](Tools/New-CurveChart.ps1) | Regenerates the chart above from the model. |
 | [`Set-SunBrightness.ps1`](Set-SunBrightness.ps1) | The original sun-only version, kept for reference. |
 

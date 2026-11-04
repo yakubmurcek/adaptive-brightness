@@ -100,6 +100,11 @@ $LogPath    = Join-Path $PSScriptRoot 'brightness.log'
 
 $script:LogLines = New-Object System.Collections.ArrayList
 
+# per-process memory of the panel, for telling a person from the hardware
+$script:SkipLogged = $false     # the "no DDC/CI support" warning is out for this stretch
+$script:PanelAway  = $false     # no panel answered at our last look
+$script:LastWakeAt = $null      # when Windows last reported the display on
+
 function Write-Log {
     param([string]$Message, [string]$Level = 'info')
 
@@ -277,6 +282,7 @@ function Read-State {
     $s = [ordered]@{
         Kt = $null; KtTimestamp = $null; LastApplied = $null
         LastRun = $null; LastFetch = $null; OverrideUntil = $null; Paused = $false
+        LastSeen = $null
     }
     if (-not (Test-Path $StatePath)) { return $s }
     try {
@@ -427,6 +433,7 @@ function Get-MonitorReadings {
     #>
     param([switch]$Quiet)
     $readings = New-Object System.Collections.ArrayList
+    $skipped = $false
     foreach ($m in (Get-PhysicalMonitorHandles)) {
         $name = ([String]::new($m.szDescription)).Trim([char]0)
         $min = 0; $cur = 0; $max = 0
@@ -441,10 +448,23 @@ function Get-MonitorReadings {
             })
         } else {
             [void][DDC]::DestroyPhysicalMonitor($m.hPhysicalMonitor)
-            if (-not $Quiet) { Write-Log "  $name : no DDC/CI brightness support, skipped" 'warn' }
+            # once per stretch, not every tick: a panel switched to another input or asleep
+            # stays unreadable for hours and used to log this line every minute
+            if (-not $Quiet -and -not $script:SkipLogged) { Write-Log "  $name : no DDC/CI brightness support, skipped" 'warn' }
+            $skipped = $true
         }
     }
+    if (-not $Quiet) { $script:SkipLogged = $skipped }
     return $readings
+}
+
+function Get-PanelPercent {
+    <# Reads one panel again through its open handle; $null if it does not answer. #>
+    param($Reading)
+    $min = 0; $cur = 0; $max = 0
+    if (-not [DDC]::GetMonitorBrightness($Reading.Handle, [ref]$min, [ref]$cur, [ref]$max)) { return $null }
+    if ($max -le $min) { return $null }
+    return (([double]$cur - $min) / [double]($max - $min)) * 100.0
 }
 
 function Close-MonitorReadings {
@@ -693,6 +713,7 @@ function Invoke-BrightnessTick {
         # in one go - exactly the snap we are trying to prevent.
         function Save-StandDown {
             $State.LastRun = $now.ToString('o')
+            if ($null -ne $observedPct) { $State.LastSeen = $observedPct }
             if ($eff.IsFresh) { $State.Kt = $eff.PersistKt; $State.KtTimestamp = $now.ToString('o') }
             Save-State $State
         }
@@ -706,25 +727,45 @@ function Invoke-BrightnessTick {
             return @{ Changed = $false; WithinDeadband = $true; SunAltitude = $alt; Stop = $false }
         }
 
+        # what the hardware did on its own since our last look, so it is not taken for you
+        $sinceWake = [double]::PositiveInfinity
+        if ($null -ne $script:LastWakeAt) { $sinceWake = ($now - $script:LastWakeAt).TotalSeconds }
+        $lastSeen = $null
+        if ($null -ne $State.LastSeen) { $lastSeen = [double]$State.LastSeen }
+        $wasAway = ($script:PanelAway -and $null -ne $observedPct)
+        if ($wasAway) { Write-Log 'a monitor answers DDC/CI again' }
+        if ($null -ne $observedPct) { $script:PanelAway = $false }
+        if (-not $WhatIfOnly -and $readings.Count -eq 0) {
+            # asleep, switched to another computer, or a laptop's internal eDP: say so once
+            # per stretch, and treat whatever level it comes back at as not yours
+            if (-not $script:PanelAway) { Write-Log "no DDC/CI capable monitor found; nothing to set until one answers" 'warn' }
+            $script:PanelAway = $true
+        }
+        $ovArgs = @{
+            LastApplied = $lastApplied; ObservedBrightness = $observedPct
+            TolerancePct = $Cfg.OverrideTolerancePct
+            SecondsSinceLastLook = $deltaSeconds
+            ResyncAfterSeconds = ($Cfg.ResyncAfterMinutes * 60.0)
+            LastSeen = $lastSeen; SecondsSinceWake = $sinceWake; PanelWasAway = $wasAway
+        }
+
         # ---- an override already in force ----
         $overrideUntil = ConvertTo-DateTimeOrNull $State.OverrideUntil
         if ($null -ne $overrideUntil -and $now -lt $overrideUntil) {
             # keep watching the panel while standing down: a second touch restarts the clock
             # from *that* touch, and the level we ease on from later is the one the user
             # actually left, not the one they started from
-            $again = Test-ManualOverride -LastApplied $lastApplied -ObservedBrightness $observedPct `
-                                         -TolerancePct $Cfg.OverrideTolerancePct `
-                                         -SecondsSinceLastLook $deltaSeconds `
-                                         -ResyncAfterSeconds ($Cfg.ResyncAfterMinutes * 60.0)
+            $again = Test-ManualOverride @ovArgs
             if ($again.Reset) {
                 # the panel snapped to max by itself; put back the level the user chose
                 Restore-PanelLevel -Readings $readings -Percent $lastApplied -Reason $again.Reason
+                $observedPct = $lastApplied
             }
             if ($again.Resync) {
-                # the panel power-cycled while we were away; follow it, but a wake is not a
-                # touch, so the override keeps its original deadline
+                # the panel moved without a person (wake, input switch, an ignored write);
+                # follow it, but that is not a touch, so the override keeps its deadline
                 $State.LastApplied = $observedPct
-                Write-Log ("panel moved while unwatched ({0}); adopting it" -f $again.Reason)
+                Write-Log ("panel moved on its own ({0}); adopting it" -f $again.Reason)
             }
             if ($again.IsOverridden) {
                 $overrideUntil = $now.AddMinutes($Cfg.OverrideMinutes)
@@ -744,18 +785,16 @@ function Invoke-BrightnessTick {
 
         # ---- did the user touch the monitor ----
         if (-not $WhatIfOnly) {
-            $ov = Test-ManualOverride -LastApplied $lastApplied -ObservedBrightness $observedPct `
-                                      -TolerancePct $Cfg.OverrideTolerancePct `
-                                      -SecondsSinceLastLook $deltaSeconds `
-                                      -ResyncAfterSeconds ($Cfg.ResyncAfterMinutes * 60.0)
+            $ov = Test-ManualOverride @ovArgs
             if ($ov.Reset) {
                 Restore-PanelLevel -Readings $readings -Percent $lastApplied -Reason $ov.Reason
+                $observedPct = $lastApplied
             }
             if ($ov.Resync) {
                 # probably the monitor's own power cycle, not a person: take the panel as the
                 # new baseline and ease from it. Zeroing the budget matters - the capped
                 # catch-up allowance would otherwise spend itself in one visible jump.
-                Write-Log ("panel moved while unwatched ({0}); easing on from there" -f $ov.Reason) 'act'
+                Write-Log ("panel moved on its own ({0}); easing on from there" -f $ov.Reason) 'act'
                 $lastApplied = [double]$observedPct
                 $actuationDelta = 0.0
             }
@@ -764,6 +803,7 @@ function Invoke-BrightnessTick {
                 # adopt the panel's level so that when the override lapses we ease on from
                 # where the user left it rather than snapping back to our stale idea
                 $State.LastApplied = $observedPct
+                $State.LastSeen = $observedPct
                 $State.LastRun = $now.ToString('o')
                 if ($eff.IsFresh) { $State.Kt = $eff.PersistKt; $State.KtTimestamp = $now.ToString('o') }
                 Save-State $State
@@ -771,6 +811,12 @@ function Invoke-BrightnessTick {
                            $ov.Reason, $Cfg.OverrideMinutes) 'warn'
                 return @{ Changed = $false; WithinDeadband = $true; SunAltitude = $alt; Stop = $false }
             }
+        }
+
+        if (-not $WhatIfOnly -and $readings.Count -eq 0) {
+            # no panel to talk to. Report it as settled so we stop spinning the DDC bus, and
+            # return before logging a move that cannot happen.
+            return @{ Changed = $false; WithinDeadband = $true; SunAltitude = $alt; Stop = $false }
         }
 
         # ---- decide the move ----
@@ -793,21 +839,21 @@ function Invoke-BrightnessTick {
                       SunAltitude = $alt; Stop = $true }
         }
 
-        if ($readings.Count -eq 0) {
-            # no panel to talk to - the display is probably asleep or on a laptop's internal
-            # eDP. Report it as settled so we stop spinning the DDC bus every few seconds
-            # waiting for hardware that may not come back until the user returns.
-            Write-Log "no DDC/CI capable monitor found; nothing to set" 'warn'
-            return @{ Changed = $false; WithinDeadband = $true; SunAltitude = $alt; Stop = $false }
-        }
-
         # ---- apply ----
+        $seen = $observedPct
         if ($decision.Changed) {
             foreach ($r in $readings) {
                 $raw = Set-MonitorPercent -Reading $r -Percent $decision.Applied -StepMs $Cfg.GlideStepMs
                 Write-Log ("  {0} : {1} -> {2} raw (range {3}-{4})" -f $r.Name, $r.Cur, $raw, $r.Min, $r.Max)
             }
+            # what the panel shows now, not what we asked for: a sleeping panel answers reads
+            # but ignores writes, and next tick must not mistake that for a person. MCCS asks
+            # for 50 ms between a set and the next get.
+            Start-Sleep -Milliseconds 60
+            $back = Get-PanelPercent -Reading $readings[0]
+            if ($null -ne $back) { $seen = $back }
         }
+        if ($null -ne $seen) { $State.LastSeen = $seen }
 
         # ---- persist ----
         $State.LastApplied = $decision.Applied
@@ -884,6 +930,7 @@ function Invoke-WakeGuard {
       not enough - the whole window is watched.
     #>
     param([double]$WindowSeconds = 30.0, [int]$EveryMs = 150)
+    $script:LastWakeAt = Get-Date
     if ($State.Paused -or $null -eq $State.LastApplied) { return }
     $level = [double]$State.LastApplied
     if ($level -ge 99.5 - $Cfg.OverrideTolerancePct) { return }
@@ -895,6 +942,7 @@ function Invoke-WakeGuard {
             foreach ($r in $readings) {
                 if ($null -ne $r.Percent -and $r.Percent -ge 99.5) {
                     $raw = Set-MonitorPercent -Reading $r -Percent $level -StepMs 0
+                    $State.LastSeen = $level
                     $fixed++
                     Write-Log ("display woke; {0} snapped to max, restored {1:N0}% ({2} raw)" -f $r.Name, $level, $raw) 'act'
                 }
