@@ -440,7 +440,21 @@ function Test-ManualOverride {
       whole override window. A person nudging the OSD lands anywhere; a reset lands on max.
       The caller writes our level straight back instead of standing down.
 
-      Returns a hashtable: IsOverridden, Resync, Reset, Reason.
+      Three more ways a panel ends up away from our level without anyone touching it, all
+      seen on a real two-computer desk (2026-10-09..11: 21 "manual" stand-downs in 40 h,
+      half the time spent standing down, until the daemon was switched off):
+
+      - Just after a display wake (WakeGraceSeconds) the panel is still settling. Within 3
+        points of max is a reset; anything else is a resync. 10 of the 21 came within a minute of a wake.
+      - The panel was unreadable at our last look (asleep, or its input switched to another
+        computer) and came back elsewhere. Whatever moved it, we never saw a person do it.
+      - The panel ignored our last write, which a sleeping panel does while still answering
+        reads. LastSeen is what it reported at our last look, after our own writes; if it has
+        not moved since, nobody touched it. This alone caused a 2 h stand-down every 2 h all
+        night ("panel at 71%, we commanded 65%").
+
+      Returns a hashtable: IsOverridden, Resync, Reset, Reason, and Ignored = true when the
+      resync is a panel that ignored our write.
     #>
     param(
         [Parameter(Mandatory)][AllowNull()][System.Nullable[double]]$LastApplied,
@@ -448,7 +462,11 @@ function Test-ManualOverride {
         [double]$TolerancePct = 3.0,
         [double]$SecondsSinceLastLook = 0.0,
         [double]$ResyncAfterSeconds   = [double]::PositiveInfinity,
-        [double]$PanelMaxPct          = 100.0
+        [double]$PanelMaxPct          = 100.0,
+        [AllowNull()][System.Nullable[double]]$LastSeen = $null,
+        [double]$SecondsSinceWake     = [double]::PositiveInfinity,
+        [double]$WakeGraceSeconds     = 60.0,
+        [switch]$PanelWasAway
     )
 
     if ($null -eq $LastApplied)        { return @{ IsOverridden = $false; Resync = $false; Reset = $false; Reason = 'no commanded value yet' } }
@@ -462,9 +480,27 @@ function Test-ManualOverride {
             return @{ IsOverridden = $false; Resync = $false; Reset = $true
                       Reason = ('{0}; panel reset to max' -f $desc) }
         }
+        if ($SecondsSinceWake -le $WakeGraceSeconds) {
+            # a fixed 3-point band, not the tolerance: a person raising it to 95% just after
+            # waking the screen meant 95%, but 97-98% is where these panels settle
+            if ([double]$ObservedBrightness -ge ($PanelMaxPct - 3.0) -and [double]$LastApplied -lt [double]$ObservedBrightness) {
+                return @{ IsOverridden = $false; Resync = $false; Reset = $true
+                          Reason = ('{0}; near max {1:N0} s after a display wake' -f $desc, $SecondsSinceWake) }
+            }
+            return @{ IsOverridden = $false; Resync = $true; Reset = $false
+                      Reason = ('{0}; {1:N0} s after a display wake' -f $desc, $SecondsSinceWake) }
+        }
+        if ($PanelWasAway) {
+            return @{ IsOverridden = $false; Resync = $true; Reset = $false
+                      Reason = ('{0}; panel was unreadable at our last look' -f $desc) }
+        }
         if ($SecondsSinceLastLook -gt $ResyncAfterSeconds) {
             return @{ IsOverridden = $false; Resync = $true; Reset = $false
                       Reason = ('{0} after {1:N0} min unwatched' -f $desc, ($SecondsSinceLastLook / 60.0)) }
+        }
+        if ($null -ne $LastSeen -and [Math]::Abs([double]$ObservedBrightness - [double]$LastSeen) -le $TolerancePct) {
+            return @{ IsOverridden = $false; Resync = $true; Reset = $false; Ignored = $true
+                      Reason = ('{0}; unchanged since our last look, so it ignored our write' -f $desc) }
         }
         return @{ IsOverridden = $true; Resync = $false; Reset = $false; Reason = $desc }
     }

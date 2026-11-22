@@ -2,6 +2,23 @@
 
 Notable changes, newest first. Dates are the day the work landed on `main`.
 
+## 2026-11-04 — stop mistaking the hardware for you
+
+On a desk where the monitors are shared with a second computer, the log showed 21 "manual change"
+stand-downs in 40 hours, the daemon standing down more than half the time, and none of them
+clearly a person.
+
+- **Fixed:** a sleeping panel that answered reads but ignored writes looked like a touch every
+  2 h all night. The level the panel reports after each write is now remembered; a panel that has
+  not moved since is followed, not obeyed, and left alone until it moves or the screen wakes.
+- **Fixed:** a panel that was unreadable at the last look (asleep, or switched to another input)
+  and came back at a different level was taken as a touch. It is now adopted as the new start.
+- **Fixed:** a panel settling at 97-98% a few seconds after a wake was a touch, because only an
+  exact 100% counted as a reset. Within 60 s of a wake, within 3 points of max is a reset and anything else is
+  adopted.
+- **Changed:** while no monitor answers DDC/CI, the log says so once instead of three lines every
+  minute.
+
 ## 2026-10-06 — restore within a blink of the screen waking
 
 - **Fixed:** a panel's snap to 100% on wake is now caught the moment Windows reports the display on
